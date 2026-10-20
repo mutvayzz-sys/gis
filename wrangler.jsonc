@@ -1,0 +1,13 @@
+{
+  // Static site served by a Cloudflare Worker (assets only, no server code).
+  "$schema": "node_modules/wrangler/config-schema.json",
+  "name": "gis",
+  "compatibility_date": "2026-06-01",
+  "assets": {
+    "directory": "./public"
+  },
+  // Attaches the Worker to gis.gcaplabs.com and creates the DNS record for it.
+  "routes": [
+    { "pattern": "gis.gcaplabs.com", "custom_domain": true }
+  ]
+}

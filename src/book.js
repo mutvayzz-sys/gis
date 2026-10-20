@@ -52,6 +52,7 @@ var Book = (function (E) {
       ['Use the % assessed column', cfg.useAssessed ? 'Yes' : 'No'],
       ['Flag an adjustment as substantial above (percentage points)', cfg.substantialPts]
     ];
+    (cfg.extraRules || []).forEach(function (r, i) { rows.push(['Extra rule ' + (i + 1), r.label || E.ruleLabel(r)]); });
     rows.forEach(function (r, i) {
       var rr = 5 + i, a = ws.getCell(rr, 2), b = ws.getCell(rr, 3);
       a.value = r[0]; b.value = r[1]; if (r[2]) b.numFmt = r[2];
@@ -61,15 +62,16 @@ var Book = (function (E) {
     });
     ws.getCell(13, 3).font = font({ color: 'FF595959' });
     // points table, sorted ascending so MATCH(...,1) works
-    ws.getCell('B21').value = 'Points for each judgement'; ws.getCell('B21').font = font({ size: 12, bold: true });
+    var P0 = Math.max(21, 5 + rows.length + 2);
+    ws.getCell(P0, 2).value = 'Points for each judgement'; ws.getCell(P0, 2).font = font({ size: 12, bold: true });
     var pts = E.CATS.filter(function (k) { return cfg.points[k] != null && cfg.points[k] !== ''; }).map(function (k) { return [k, +cfg.points[k]]; }).sort(function (a, b) { return a[1] - b[1]; });
-    ['Judgement', 'Points'].forEach(function (h, i) { var x = ws.getCell(22, 2 + i); x.value = h; x.font = font({ bold: true }); x.fill = fill(C.yel); x.border = { top: M, bottom: M, left: i === 0 ? M : T, right: i === 1 ? M : T }; x.alignment = { horizontal: 'center' }; });
+    ['Judgement', 'Points'].forEach(function (h, i) { var x = ws.getCell(P0 + 1, 2 + i); x.value = h; x.font = font({ bold: true }); x.fill = fill(C.yel); x.border = { top: M, bottom: M, left: i === 0 ? M : T, right: i === 1 ? M : T }; x.alignment = { horizontal: 'center' }; });
     pts.forEach(function (p, i) {
-      var a = ws.getCell(23 + i, 2), b = ws.getCell(23 + i, 3); a.value = p[0]; b.value = p[1];
+      var a = ws.getCell(P0 + 2 + i, 2), b = ws.getCell(P0 + 2 + i, 3); a.value = p[0]; b.value = p[1];
       [a, b].forEach(function (x, j) { x.font = font({ bold: j === 1, color: j === 1 ? 'FF0000FF' : null }); x.fill = fill(j ? C.pale : C.cream); x.alignment = { horizontal: 'center' }; x.border = { top: T, bottom: i === pts.length - 1 ? M : T, left: j === 0 ? M : T, right: j === 1 ? M : T }; });
     });
-    var last = 22 + pts.length;
-    return { names: '$B$23:$B$' + last, pts: '$C$23:$C$' + last };
+    var last = P0 + 1 + pts.length;
+    return { names: '$B$' + (P0 + 2) + ':$B$' + last, pts: '$C$' + (P0 + 2) + ':$C$' + last };
   }
 
   /* ---------- formulas for one copied table ---------- */
@@ -90,12 +92,15 @@ var Book = (function (E) {
     parsed.blocks.forEach(function (b) {
       var c = b.col, maxC = 0;
       Object.keys(c).forEach(function (k) { if (c[k] != null) maxC = Math.max(maxC, c[k]); });
-      var hA = maxC + 1, hP = maxC + 2, hK = c.K || null;
-      if (!hK) { hK = maxC + 3; }
-      helpers[b.id] = { A: hA, P: hP, K: hK };
+      var nx = maxC + 1, hA = nx++, hP = nx++, hK = c.K || nx++;
+      var dG = c.G == null, dH = c.H == null, hG = dG ? nx++ : c.G, hH = dH ? nx++ : c.H;
+      var colOf = { E: c.E, G: hG, H: hH };
+      helpers[b.id] = { A: hA, P: hP, K: hK, G: hG, H: hH };
       var hr = b.headerRow;
       var heads = [[hA, 'Assessed students (calculated)'], [hP, 'Points (component) / average (total)']];
       if (!c.K) heads.push([hK, 'Judgement (calculated)']);
+      if (dG) heads.push([hG, 'Expected or better, students (worked out from %)']);
+      if (dH) heads.push([hH, 'Better than expected, students (worked out from %)']);
       heads.forEach(function (h) {
         var x = ws.getCell(hr, h[0]); x.value = h[1]; x.font = font({ bold: true, color: 'FF595959', size: 9 }); x.fill = fill('FFF2F2F2');
         x.alignment = { horizontal: 'center', vertical: 'middle', wrapText: true }; x.border = { top: M, bottom: M, left: T, right: T };
@@ -109,6 +114,17 @@ var Book = (function (E) {
         var id = b.id + ':' + x0.r, it = byId[id], bi = baseById[id]; if (!it) return;
         var r = x0.r;
         // edited or simulated counts
+        var aRef = cellRef(hA, r), gRef = cellRef(hG, r), hRef = cellRef(hH, r);
+        [['G', dG, c.I], ['H', dH, c.J]].forEach(function (q) {
+          if (!q[1]) return;
+          var k = q[0], pc = q[2] != null ? cellRef(q[2], r) : null, cell;
+          var changed = mode === 'sim' && bi && it[k] !== bi[k];
+          if (mode === 'actual' && pc && x0[k] == null) cell = setF(colOf[k], r, 'ROUND(IF(' + pc + '>1,' + pc + '/100,' + pc + ')*' + aRef + ',0)', it[k], '0');
+          else { cell = ws.getCell(r, colOf[k]); cell.value = it[k]; cell.numFmt = '0'; }
+          styleHelper(cell, false);
+          if (changed) { cell.fill = fill(C.blue); cell.font = font({ bold: true, color: C.ink }); cell.note = 'SIMULATED (planning assumption). Actual value ' + E.fmt(bi[k]) + ', change ' + (it[k] - bi[k] > 0 ? '+' : '') + E.fmt(it[k] - bi[k]) + '.'; }
+          else if (mode === 'actual') cell.note = 'Worked out from the percentage x assessed students, rounded to whole students.';
+        });
         ['E', 'G', 'H'].forEach(function (k) {
           if (c[k] == null) return;
           var cell = ws.getCell(r, c[k]), srcV = x0.orig ? x0.orig[k] : x0[k];
@@ -118,18 +134,17 @@ var Book = (function (E) {
             else if (bi && it[k] === bi[k] && it[k] !== srcV) { cell.note = 'Edited on the page. File value ' + E.fmt(srcV) + '.'; }
           }
         });
-        var aRef = cellRef(hA, r), gRef = cellRef(c.G, r), hRef = cellRef(c.H, r);
         var aF = (cfg.useAssessed && c.F != null) ? 'ROUND(' + cellRef(c.E, r) + '*IF(' + cellRef(c.F, r) + '>1,' + cellRef(c.F, r) + '/100,' + cellRef(c.F, r) + '),0)' : cellRef(c.E, r);
         styleHelper(setF(hA, r, aF, it.A, '0'), false);
-        if (c.I != null) { var xi = setF(c.I, r, 'IF(' + aRef + '>0,' + gRef + '/' + aRef + ',0)', it.I || 0, '0.0%'); if (mode === 'sim' && bi && it.G !== bi.G) { xi.fill = fill(C.blue); xi.font = font({ bold: true, color: C.ink }); } }
-        if (c.J != null) { var xj = setF(c.J, r, 'IF(' + aRef + '>0,' + hRef + '/' + aRef + ',0)', it.J || 0, '0.0%'); if (mode === 'sim' && bi && it.H !== bi.H) { xj.fill = fill(C.blue); xj.font = font({ bold: true, color: C.ink }); } }
+        if (c.I != null && !(dG && mode === 'actual')) { var xi = setF(c.I, r, 'IF(' + aRef + '>0,' + gRef + '/' + aRef + ',0)', it.I || 0, '0.0%'); if (mode === 'sim' && bi && it.G !== bi.G) { xi.fill = fill(C.blue); xi.font = font({ bold: true, color: C.ink }); } }
+        if (c.J != null && !(dH && mode === 'actual')) { var xj = setF(c.J, r, 'IF(' + aRef + '>0,' + hRef + '/' + aRef + ',0)', it.J || 0, '0.0%'); if (mode === 'sim' && bi && it.H !== bi.H) { xj.fill = fill(C.blue); xj.font = font({ bold: true, color: C.ink }); } }
         var xk = setF(hK, r, judgeF(aRef, gRef, hRef), it.judg);
         if (!c.K) styleHelper(xk, false);
         if (mode === 'sim' && bi && it.judg !== bi.judg) { xk.fill = fill(C.blue); xk.font = font({ bold: true, color: C.ink }); xk.note = 'SIMULATED. Actual judgement: ' + bi.judg + '.'; }
         else if (mode === 'actual' && x0.K && x0.K !== it.judg) { xk.fill = fill(C.orange); xk.note = 'Corrected. The file said ' + x0.K + '.'; }
         if (mode === 'actual') {
-          if (c.I != null && x0.I != null && Math.abs(x0.I - (it.I || 0)) > 5e-5) { ws.getCell(r, c.I).fill = fill(C.orange); ws.getCell(r, c.I).note = 'Corrected. The file said ' + E.pct(x0.I, 2) + '.'; }
-          if (c.J != null && x0.J != null && Math.abs(x0.J - (it.J || 0)) > 5e-5) { ws.getCell(r, c.J).fill = fill(C.orange); ws.getCell(r, c.J).note = 'Corrected. The file said ' + E.pct(x0.J, 2) + '.'; }
+          if (!dG && c.I != null && x0.I != null && Math.abs(x0.I - (it.I || 0)) > 5e-5) { ws.getCell(r, c.I).fill = fill(C.orange); ws.getCell(r, c.I).note = 'Corrected. The file said ' + E.pct(x0.I, 2) + '.'; }
+          if (!dH && c.J != null && x0.J != null && Math.abs(x0.J - (it.J || 0)) > 5e-5) { ws.getCell(r, c.J).fill = fill(C.orange); ws.getCell(r, c.J).note = 'Corrected. The file said ' + E.pct(x0.J, 2) + '.'; }
         }
         styleHelper(setF(hP, r, 'IFERROR(INDEX(' + st + ctx.pts.pts + ',MATCH(' + cellRef(hK, r) + ',' + st + ctx.pts.names + ',0)),"")', it.pts == null ? '' : it.pts, '0'), false);
       });
@@ -142,18 +157,19 @@ var Book = (function (E) {
         function sumF(col) { return contiguous ? 'SUM(' + L(col) + mem[0] + ':' + L(col) + mem[mem.length - 1] + ')' : mem.map(function (m) { return L(col) + m; }).join('+'); }
         var fixed = {};
         ['E', 'G', 'H'].forEach(function (k) {
-          if (c[k] == null) return;
-          var x = setF(c[k], r, sumF(c[k]), it[k], '0');
-          if (mode === 'actual' && t0[k] != null && Math.abs(t0[k] - it[k]) > 1e-6) { x.fill = fill(C.orange); x.note = 'Corrected. The file said ' + E.fmt(t0[k]) + ' (it should be the sum of the rows).'; fixed[k] = 1; }
+          if (colOf[k] == null) return;
+          var x = setF(colOf[k], r, sumF(colOf[k]), it[k], '0');
+          if (colOf[k] !== c[k]) styleHelper(x, true);
+          if (mode === 'actual' && c[k] != null && t0[k] != null && Math.abs(t0[k] - it[k]) > 1e-6) { x.fill = fill(C.orange); x.note = 'Corrected. The file said ' + E.fmt(t0[k]) + ' (it should be the sum of the rows).'; fixed[k] = 1; }
           if (mode === 'sim' && bi && it[k] !== bi[k]) { x.fill = fill(C.blue); x.font = font({ bold: true, color: C.ink }); x.note = 'Changes because its rows changed. Actual ' + E.fmt(bi[k]) + '.'; }
         });
         var aRef = cellRef(hA, r);
         styleHelper(setF(hA, r, sumF(hA), it.A, '0'), true);
         ['I', 'J'].forEach(function (k) {
           if (c[k] == null) return;
-          var cnt = k === 'I' ? c.G : c.H, v = k === 'I' ? it.I : it.J;
+          var cnt = k === 'I' ? hG : hH, v = k === 'I' ? it.I : it.J;
           var x = setF(c[k], r, 'IF(' + aRef + '>0,' + L(cnt) + r + '/' + aRef + ',0)', v || 0, '0.0%');
-          if (mode === 'actual' && t0[k] != null && Math.abs(t0[k] - (v || 0)) > 5e-5) { x.fill = fill(C.orange); x.note = 'Corrected. The file said ' + E.pct(t0[k], 2) + ' (a simple average, not total divided by total).'; }
+          if (mode === 'actual' && !(k === 'I' ? dG : dH) && t0[k] != null && Math.abs(t0[k] - (v || 0)) > 5e-5) { x.fill = fill(C.orange); x.note = 'Corrected. The file said ' + E.pct(t0[k], 2) + ' (a simple average, not total divided by total).'; }
           if (mode === 'sim' && bi && Math.abs((v || 0) - ((k === 'I' ? bi.I : bi.J) || 0)) > 1e-9) { x.fill = fill(C.blue); x.font = font({ bold: true, color: C.ink }); }
         });
         // points average and total judgement
@@ -162,7 +178,7 @@ var Book = (function (E) {
         if (it.roundingFlag) { xp.fill = fill('FFFFF2CC'); xp.note = 'Average ' + it.avg.toFixed(2) + '. No rounding rule was supplied, so the nearest whole point is used for now. Please confirm the rule.'; }
         var kf = cfg.totalMethod === 'points'
           ? 'IFERROR(INDEX(' + st + ctx.pts.names + ',MATCH(' + roundF(L(hP) + r) + ',' + st + ctx.pts.pts + ',1)),"No data")'
-          : judgeF(aRef, L(c.G) + r, L(c.H) + r);
+          : judgeF(aRef, L(hG) + r, L(hH) + r);
         var xk = setF(hK, r, kf, it.judg);
         if (!c.K) styleHelper(xk, true);
         if (mode === 'actual' && t0.K && t0.K !== it.judg) { xk.fill = fill(C.orange); xk.note = 'Corrected. The file said ' + t0.K + '.'; }
@@ -187,10 +203,11 @@ var Book = (function (E) {
     });
     return helpers;
   }
-  function banner(ws, ctx, text, color) {
+  function banner(ws, ctx, text, color, help) {
     var b = ctx.parsed.blocks[0], minC = Infinity, maxC = 0;
     ctx.parsed.blocks.forEach(function (bb) { Object.keys(bb.col).forEach(function (k) { if (bb.col[k] != null) { minC = Math.min(minC, bb.col[k]); maxC = Math.max(maxC, bb.col[k]); } }); });
-    maxC += 3;
+    var hx = 0; Object.keys(help || {}).forEach(function (id) { Object.keys(help[id]).forEach(function (k) { if (help[id][k] > hx) hx = help[id][k]; }); });
+    maxC = Math.max(maxC + 3, hx);
     var row1Free = true;
     for (var c = minC; c <= maxC; c++) { var v = ws.getCell(1, c).value; if (v != null && v !== '') row1Free = false; }
     if (row1Free && b.headerRow > 1) {
@@ -250,8 +267,8 @@ var Book = (function (E) {
     var s = opt ? clone(wb, src, simName) : null; if (s) s.properties.tabColor = { argb: C.red };
     var pts = settingsSheet(wb, cfg); ctx.pts = pts;
     var help = writeTable(a, ctx, 'actual', ctx.base, null);
-    banner(a, ctx, 'ACTUAL RESULTS, corrected. Orange cells were fixed (see Corrections log).', C.green);
-    if (s) { writeTable(s, ctx, 'sim', opt.model, ctx.base); banner(s, ctx, String(cfg.simTitle).toUpperCase() + '. Blue cells are planning assumptions.', C.red); }
+    banner(a, ctx, 'ACTUAL RESULTS, corrected. Orange cells were fixed (see Corrections log).', C.green, help);
+    if (s) { var helpS = writeTable(s, ctx, 'sim', opt.model, ctx.base); banner(s, ctx, String(cfg.simTitle).toUpperCase() + '. Blue cells are planning assumptions.', C.red, helpS); }
     comparison(wb, ctx, opt, simName, help);
     countsSheet(wb, ctx, opt);
     totalsSheet(wb, ctx, opt, simName, help);
@@ -320,6 +337,13 @@ var Book = (function (E) {
     rows.push(['Within the Weak limit?'].concat(heads.slice(1).map(function (_, i) { var col = L(3 + i); return { formula: 'IF(' + col + (tr + 1) + '<=' + st + S.capW + '+0.0000001,"Yes","No")' }; })));
     rows.push(['Outstanding share'].concat(heads.slice(1).map(function (_, i) { var col = L(3 + i); return { formula: 'IF(' + col + tr + '>0,' + col + oRow + '/' + col + tr + ',0)' }; })));
     rows.push(['Within the Outstanding limit?'].concat(heads.slice(1).map(function (_, i) { var col = L(3 + i); return { formula: 'IF(' + col + (tr + 3) + '<=' + st + S.capO + '+0.0000001,"Yes","No")' }; })));
+    var xr = cfg.extraRules || [];
+    xr.forEach(function (rule, ri) {
+      var catRows = (rule.cats || []).map(function (k) { return r0 + cats.indexOf(k) + 1; }).filter(function (x) { return x > r0; });
+      var shareRow = tr + 5 + ri * 2;
+      rows.push([(rule.label || E.ruleLabel(rule)) + ': share'].concat(heads.slice(1).map(function (_, i) { var col = L(3 + i); return { formula: 'IF(' + col + tr + '>0,(' + (catRows.map(function (x) { return col + x; }).join('+') || '0') + ')/' + col + tr + ',0)' }; })));
+      rows.push([(rule.label || E.ruleLabel(rule)) + ': met?'].concat(heads.slice(1).map(function (_, i) { var col = L(3 + i); return { formula: 'IF(' + col + shareRow + (rule.op === 'min' ? '>=' + rule.share + '-0.0000001' : '<=' + rule.share + '+0.0000001') + ',"Yes","No")' }; })));
+    });
     // fill results so viewers without recalculation still see numbers
     var lists = {
       'Grades': [E.counted(ctx.base.items, 'grades'), E.counted((opt ? opt.model : ctx.base).items, 'grades')],
@@ -335,6 +359,11 @@ var Book = (function (E) {
       rows[cats.length + 2][1 + i].result = k.weakOk ? 'Yes' : 'No';
       rows[cats.length + 3][1 + i].result = d.n ? k.out / d.n : 0;
       rows[cats.length + 4][1 + i].result = k.outOk ? 'Yes' : 'No';
+      k.extra.forEach(function (x, ri) {
+        var sh = 0; (xr[ri].cats || []).forEach(function (cat) { sh += d.counts[cat] || 0; });
+        rows[cats.length + 5 + ri * 2][1 + i].result = d.n ? sh / d.n : 0;
+        rows[cats.length + 6 + ri * 2][1 + i].result = (xr[ri].op === 'min' ? (d.n ? sh / d.n : 0) >= xr[ri].share - 1e-7 : (d.n ? sh / d.n : 0) <= xr[ri].share + 1e-7) ? 'Yes' : 'No';
+      });
     });
     table(ws, r0, 2, heads, rows, {
       headFills: heads.map(function (_, i) { return i > 0 && i % 2 === 0 ? C.blue : C.yel; }),
@@ -342,9 +371,11 @@ var Book = (function (E) {
       bold: function (i, j) { return j >= cats.length; },
       fmt: [null], widths: [30, 12, 12, 12, 12, 12, 12], headHeight: 40
     });
-    [tr + 1, tr + 3].forEach(function (r) { for (var i = 0; i < 6; i++) ws.getCell(r, 3 + i).numFmt = '0.0%'; });
-    [tr + 2, tr + 4].forEach(function (r) { for (var i = 0; i < 6; i++) { var x = ws.getCell(r, 3 + i); x.font = font({ bold: true, color: x.value.result === 'Yes' ? 'FF375623' : 'FFC00000' }); } });
-    var note = ws.getCell(tr + 7, 2);
+    var shareRows = [tr + 1, tr + 3], metRows = [tr + 2, tr + 4];
+    xr.forEach(function (_, ri) { shareRows.push(tr + 5 + ri * 2); metRows.push(tr + 6 + ri * 2); });
+    shareRows.forEach(function (r) { for (var i = 0; i < 6; i++) ws.getCell(r, 3 + i).numFmt = '0.0%'; });
+    metRows.forEach(function (r) { for (var i = 0; i < 6; i++) { var x = ws.getCell(r, 3 + i); x.font = font({ bold: true, color: x.value.result === 'Yes' ? 'FF375623' : 'FFC00000' }); } });
+    var note = ws.getCell(tr + 7 + xr.length * 2, 2);
     note.value = 'The targets are checked on: ' + { both: 'all judgements (grades and phase totals)', grades: 'grade judgements only', phases: 'phase total judgements only' }[cfg.basis] + '. With few judgements, a 20% limit allows very few Weak results (for example, 0 of 3).';
     note.font = font({ italic: true, color: 'FF595959' });
   }
@@ -409,22 +440,39 @@ var Book = (function (E) {
       'Thresholds were not changed. Every judgement is recalculated from the simulated counts using the criteria in Settings.',
       'Each grade moves only as far as needed, so grades keep different results from each other.'
     ];
+    var lim = [];
+    if (cfg.simMaxStudents != null) lim.push('no grade gains more than ' + cfg.simMaxStudents + ' students');
+    if (cfg.simMaxPts != null) lim.push('no grade moves more than ' + cfg.simMaxPts + ' percentage points');
+    if ((cfg.simLocked || []).length) { var nm = {}; ctx.base.items.forEach(function (x) { nm[x.id] = x.grade; }); lim.push('these grades were left alone: ' + cfg.simLocked.map(function (id) { return nm[id] || id; }).join(', ')); }
+    if (lim.length) notes.push('Limits set for this simulation: ' + lim.join('; ') + '.');
+    if (Object.keys(cfg.simPinned || {}).length) notes.push('Some changes were chosen by hand rather than by the fewest-changes search; they are included above.');
+    (opt.check.extra || []).forEach(function (x) { notes.push(x.label + ': ' + (x.ok ? 'met' : 'not met') + ' in this scenario (' + x.count + ' of ' + opt.check.n + ').'); });
     notes.forEach(function (t, i) { var x = ws.getCell(last + 2 + i, 2); x.value = '• ' + t; x.font = font({ color: i === 1 && opt.substantial ? 'FFC00000' : 'FF262626', bold: i === 0 }); });
   }
 
   /* ---------- a source workbook for pasted or typed data ---------- */
-  function synthetic(rows, title) {
+  function synthetic(rows, title, opt) {
+    opt = opt || {};
+    var pctMode = !!opt.pct;
     var wb = new ExcelJS.Workbook(), ws = wb.addWorksheet('Data');
-    [3, 10, 14, 10, 13, 12, 14, 14, 14, 14, 13].forEach(function (w, i) { ws.getColumn(i + 1).width = w; });
-    ws.mergeCells('B2:K2'); var t = ws.getCell('B2'); t.value = title || 'Progress'; t.font = font({ size: 16, bold: true }); t.fill = fill(C.yel); t.alignment = { horizontal: 'center' };
-    var head = ['Phase', 'Group of Students', 'Grade/Year', 'No. of students in this group', '% Students assessed', 'students that made expected or better progress', 'students that made better than expected progress', '% of students that made expected or better progress', '% of students that made better than expected progress', 'Judgement'];
-    head.forEach(function (h, i) { var x = ws.getCell(3, 2 + i); x.value = h; x.font = font({ bold: true }); x.alignment = { horizontal: 'center', vertical: 'middle', wrapText: true }; x.border = { top: M, bottom: M, left: i === 0 ? M : T, right: i === 9 ? M : T }; x.fill = fill(i === 9 ? C.yel : C.white); });
+    var head = pctMode
+      ? ['Phase', 'Group of Students', 'Grade/Year', 'No. of students in this group', '% Students assessed', '% of students that made expected or better progress', '% of students that made better than expected progress', 'Judgement']
+      : ['Phase', 'Group of Students', 'Grade/Year', 'No. of students in this group', '% Students assessed', 'students that made expected or better progress', 'students that made better than expected progress', '% of students that made expected or better progress', '% of students that made better than expected progress', 'Judgement'];
+    var last = head.length - 1, key = pctMode ? [3, 5, 6] : [3, 5, 6];
+    var widths = pctMode ? [3, 10, 14, 10, 13, 12, 16, 16, 13] : [3, 10, 14, 10, 13, 12, 14, 14, 14, 14, 13];
+    widths.forEach(function (w, i) { ws.getColumn(i + 1).width = w; });
+    ws.mergeCells(2, 2, 2, 1 + head.length); var t = ws.getCell('B2'); t.value = title || 'Progress'; t.font = font({ size: 16, bold: true }); t.fill = fill(C.yel); t.alignment = { horizontal: 'center' };
+    head.forEach(function (h, i) { var x = ws.getCell(3, 2 + i); x.value = h; x.font = font({ bold: true }); x.alignment = { horizontal: 'center', vertical: 'middle', wrapText: true }; x.border = { top: M, bottom: M, left: i === 0 ? M : T, right: i === last ? M : T }; x.fill = fill(i === last ? C.yel : C.white); });
     ws.getRow(3).height = 78;
     var r = 4;
+    function frac(v) { return v == null || v === '' ? null : (+v > 1 ? +v / 100 : +v); }
     rows.forEach(function (x) {
-      [x.phase, x.group || 'All students', x.grade, x.E, x.F == null ? 100 : x.F, x.G, x.H, null, null, null].forEach(function (v, i) {
-        var c = ws.getCell(r, 2 + i); c.value = v; c.alignment = { horizontal: 'center' }; c.fill = fill(i === 3 || i === 5 || i === 6 ? C.yel : C.cream); c.font = font({ bold: i === 3 || i === 5 || i === 6 });
-        c.border = { top: T, bottom: T, left: i === 0 ? M : T, right: i === 9 ? M : T };
+      var vals = pctMode ? [x.phase, x.group || 'All students', x.grade, x.E, x.F == null ? 1 : frac(x.F), frac(x.I), frac(x.J), null]
+        : [x.phase, x.group || 'All students', x.grade, x.E, x.F == null ? 100 : x.F, x.G, x.H, null, null, null];
+      vals.forEach(function (v, i) {
+        var c = ws.getCell(r, 2 + i); c.value = v === '' ? null : v; c.alignment = { horizontal: 'center' }; c.fill = fill(key.indexOf(i) >= 0 ? C.yel : C.cream); c.font = font({ bold: key.indexOf(i) >= 0 });
+        if (pctMode && (i === 4 || i === 5 || i === 6)) c.numFmt = '0.0%';
+        c.border = { top: T, bottom: T, left: i === 0 ? M : T, right: i === last ? M : T };
       });
       r++;
     });

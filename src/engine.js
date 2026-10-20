@@ -17,6 +17,11 @@ var Engine = (function () {
       capWeak: 0.20, capOut: 0.20,
       substantialPts: 10,
       simTitle: 'Simulated scenario—not actual results',
+      extraRules: [],                 // [{label, cats:[...], op:'max'|'min', share:0..1}]
+      simLocked: [],                  // grade ids the simulation may not change
+      simMaxStudents: null,           // most students a simulation may add to one grade
+      simMaxPts: null,                // most percentage points a simulation may move one grade
+      simPinned: {},                  // the person's own changes {id: {G, H}} applied to the simulated scenario
       columns: {}                     // role -> column number override
     };
   }
@@ -54,6 +59,13 @@ var Engine = (function () {
     });
     return best || low;
   }
+  function ruleLabel(r) {
+    var cats = r.cats || [], names;
+    var orBetter = ['Outstanding', 'Very Good', 'Good', 'Acceptable'], i;
+    for (i = 1; i <= orBetter.length; i++) if (cats.length === i && orBetter.slice(0, i).every(function (k) { return cats.indexOf(k) >= 0; })) { names = orBetter[i - 1] + (i > 1 ? ' or better' : ''); break; }
+    if (!names) names = cats.join(' or ');
+    return (r.op === 'min' ? 'At least ' : 'No more than ') + Math.round(r.share * 1000) / 10 + '% ' + names;
+  }
   function isWeakish(j, c) { return j === 'Weak' || (c.vwCountsAsWeak && j === 'Very Weak'); }
 
   /* ---------- reading a sheet ---------- */
@@ -66,25 +78,26 @@ var Engine = (function () {
   function get(grid, r, c) { var v = grid.cells[r + ',' + c]; return v === undefined ? null : v; }
   function text(v) { return v == null ? '' : String(v).trim(); }
 
+  var EXP = /expected or better|expected or above|at or above|met or exceeded|met (?:the )?(?:projected|expected|growth|target|typical)|achieved (?:expected|growth|target|typical)|on track|at expected|meeting (?:expected|growth|target)/;
+  var BET = /better than expected|above expected|exceeded (?:the )?(?:projected|expected|growth|target|typical)|^exceeded|above (?:target|typical)|accelerated|high growth|^above$|beyond expected|more than expected/;
   function detectHeader(grid, r, loose) {
     var col = {}, hits = 0;
     for (var c = 1; c <= grid.maxC; c++) {
-      var s = text(get(grid, r, c)).toLowerCase();
-      if (!s) continue;
-      var pct = /%|percent/.test(s);
-      if (/phase|key stage|cycle/.test(s) && col.phase == null) col.phase = c;
-      else if (/group|cohort|category/.test(s) && col.group == null) col.group = c;
-      else if (/grade|year|class/.test(s) && !pct && col.grade == null) { col.grade = c; hits++; }
-      else if (/assessed|tested/.test(s) && col.F == null) col.F = c;
-      else if ((/no\.? of students|number of students|students in|cohort size|^n$|total students/.test(s)) && !pct && col.E == null) { col.E = c; hits++; }
-      else if (pct && /expected or better|expected or above|at or above|met or exceeded/.test(s) && col.I == null) col.I = c;
-      else if (pct && /better than expected|above expected|exceeded/.test(s) && col.J == null) col.J = c;
-      else if (/expected or better|expected or above|at or above|met or exceeded/.test(s) && col.G == null) { col.G = c; hits++; }
-      else if (/better than expected|above expected|exceeded/.test(s) && col.H == null) { col.H = c; hits++; }
-      else if (/judg|rating|evaluation/.test(s) && col.K == null) col.K = c;
+      var s = text(get(grid, r, c)).toLowerCase().replace(/\s+/g, ' ');
+      if (!s || s.length > 140) continue;
+      var pct = /%|percent|\brate\b|proportion/.test(s);
+      if (!pct && /phase|key stage|cycle|^stage$|school section/.test(s) && col.phase == null) col.phase = c;
+      else if (!pct && col.E == null && /(?:no\.?|number|num|count|total|^n)\s*(?:of\s*)?(?:students|pupils|learners|tested|assessed|children)|students in|cohort size|^n$|^students$|^pupils$|^learners$|^(?:students |pupils )?tested$|enrol/.test(s)) { col.E = c; hits++; }
+      else if (pct && /assessed|tested|participation|took/.test(s) && col.F == null) col.F = c;
+      else if (!pct && /grade|year|\byr\b|class|level/.test(s) && !EXP.test(s) && !BET.test(s) && col.grade == null) { col.grade = c; hits++; }
+      else if (/group|subgroup|category|cohort|subject|course/.test(s) && !EXP.test(s) && !BET.test(s) && col.group == null) col.group = c;
+      else if (EXP.test(s)) { if (pct) { if (col.I == null) { col.I = c; hits++; } } else if (col.G == null) { col.G = c; hits++; } }
+      else if (BET.test(s)) { if (pct) { if (col.J == null) { col.J = c; hits++; } } else if (col.H == null) { col.H = c; hits++; } }
+      else if (/judg|rating|evaluation|outcome/.test(s) && col.K == null) col.K = c;
     }
+    if (col.G != null && col.I != null) hits--; if (col.H != null && col.J != null) hits--;
     if (loose) return col;
-    return hits >= 3 && col.grade != null ? col : null;
+    return hits >= 3 && col.grade != null && (col.G != null || col.I != null) ? col : null;
   }
 
   function parse(grid, opt) {
@@ -126,7 +139,7 @@ var Engine = (function () {
           rec.phase = ph; rec.members = pend.map(function (x) { return x.r; });
           b.totals.push(rec); pend = []; pendExplicit = null;
         } else {
-          if (rec.E == null && rec.G == null && rec.H == null) continue;
+          if (rec.E == null && rec.G == null && rec.H == null && rec.I == null) continue;
           b.rows.push(rec); pend.push(rec);
         }
       }
@@ -158,11 +171,15 @@ var Engine = (function () {
     parsed.blocks.forEach(function (b) {
       var map = {}, order = [];
       b.rows.forEach(function (x) {
-        var key = b.id + '|' + x.group + '|' + x.phase;
-        if (!map[key]) { map[key] = { key: key, block: b.title, blockId: b.id, group: x.group, phase: x.phase, grades: [], total: null }; order.push(key); }
         var o = override[b.id + ':' + x.r] || {};
-        var it = { id: b.id + ':' + x.r, kind: 'grade', blockId: b.id, r: x.r, block: b.title, group: x.group, phase: x.phase, grade: x.grade, label: x.grade,
-          E: x.E, A: assessedOf(x, c), G: o.G != null ? o.G : x.G, H: o.H != null ? o.H : x.H };
+        var ph = o.phase != null && o.phase !== '' ? String(o.phase) : x.phase;
+        var key = b.id + '|' + x.group + '|' + ph;
+        if (!map[key]) { map[key] = { key: key, block: b.title, blockId: b.id, group: x.group, phase: ph, grades: [], total: null }; order.push(key); }
+        var A0 = assessedOf(x, c), frac = function (v) { return v == null ? null : (v > 1 ? v / 100 : v); };
+        var G0 = x.G != null ? x.G : (x.I != null && A0 != null ? Math.round(frac(x.I) * A0) : null);
+        var H0 = x.H != null ? x.H : (x.J != null && A0 != null ? Math.round(frac(x.J) * A0) : null);
+        var it = { id: b.id + ':' + x.r, kind: 'grade', blockId: b.id, r: x.r, block: b.title, group: x.group, phase: ph, phaseSet: ph !== x.phase, grade: x.grade, label: x.grade,
+          E: x.E, A: A0, G: o.G != null ? o.G : G0, H: o.H != null ? o.H : H0, derived: x.G == null || x.H == null };
         it.I = it.A > 0 ? it.G / it.A : null; it.J = it.A > 0 ? it.H / it.A : null;
         it.judg = judge(it.A, it.G, it.H, c); it.pts = c.points[it.judg] != null ? +c.points[it.judg] : null;
         map[key].grades.push(it);
@@ -203,7 +220,13 @@ var Engine = (function () {
     var d = dist(list), n = d.n;
     var w = d.counts['Weak'] + (c.vwCountsAsWeak ? d.counts['Very Weak'] : 0), o = d.counts['Outstanding'];
     var maxW = Math.floor(c.capWeak * n + 1e-9), maxO = Math.floor(c.capOut * n + 1e-9);
-    return { d: d, n: n, weak: w, out: o, maxW: maxW, maxO: maxO, weakOk: w <= maxW, outOk: o <= maxO };
+    var extra = (c.extraRules || []).map(function (r) {
+      var cnt = 0; (r.cats || []).forEach(function (k) { cnt += d.counts[k] || 0; });
+      var lim = r.op === 'min' ? Math.ceil(r.share * n - 1e-9) : Math.floor(r.share * n + 1e-9);
+      return { label: r.label || ruleLabel(r), count: cnt, limit: lim, op: r.op, ok: r.op === 'min' ? cnt >= lim : cnt <= lim };
+    });
+    var extraOk = extra.every(function (x) { return x.ok; });
+    return { d: d, n: n, weak: w, out: o, maxW: maxW, maxO: maxO, weakOk: w <= maxW, outOk: o <= maxO, extra: extra, extraOk: extraOk, allOk: w <= maxW && o <= maxO && extraOk };
   }
 
   /* ---------- corrections ---------- */
@@ -217,7 +240,7 @@ var Engine = (function () {
         var mem = b.rows.filter(function (x) { return t.members.indexOf(x.r) >= 0; });
         if (!mem.length) return;
         var sE = 0, sG = 0, sH = 0, sA = 0, k = mem.length;
-        mem.forEach(function (x) { sE += x.E || 0; sG += x.G || 0; sH += x.H || 0; sA += assessedOf(x, c); });
+        mem.forEach(function (x) { var A1 = assessedOf(x, c), f1 = function (v) { return v > 1 ? v / 100 : v; }; sE += x.E || 0; sG += x.G != null ? x.G : Math.round(f1(x.I || 0) * A1); sH += x.H != null ? x.H : Math.round(f1(x.J || 0) * A1); sA += A1; });
         var name = tag + 'Phase ' + t.phase + ' total', parts = [], cells = [];
         if (t.E != null && Math.abs(t.E - sE) > 1e-6) { parts.push('student count ' + fmt(t.E) + ' should be ' + sE); cells.push(['E', t.E, sE]); }
         if (t.G != null && Math.abs(t.G - sG) > 1e-6) { parts.push('expected or better ' + fmt(t.G) + (Math.abs(t.G - sG / k) < 0.01 ? ' (an average)' : '') + ' should be ' + sG); cells.push(['G', t.G, sG]); }
@@ -229,6 +252,7 @@ var Engine = (function () {
       b.rows.forEach(function (x) {
         totalRows++;
         var A = assessedOf(x, c), probs = [], cells = [];
+        if (x.G == null || x.H == null) { okRows++; return; }
         if (x.I != null && A && Math.abs(x.I - x.G / A) > 5e-5) { probs.push('% expected or better ' + pct(x.I, 2) + ' should be ' + pct(x.G / A, 2)); cells.push(['I', x.I, x.G / A]); }
         if (x.J != null && A && Math.abs(x.J - x.H / A) > 5e-5) { probs.push('% better than expected ' + pct(x.J, 2) + ' should be ' + pct(x.H / A, 2)); cells.push(['J', x.J, x.H / A]); }
         var nj = judge(A, x.G, x.H, c);
@@ -239,6 +263,11 @@ var Engine = (function () {
         else okRows++;
       });
     });
+    parsed.blocks.forEach(function (b) {
+      if ((b.col.phase == null || b.rows.every(function (x) { return x.label == null; })) && !b.totals.length && b.rows.length > 1) fixes.push({ kind: 'phase', what: (parsed.blocks.length > 1 ? b.title + ': ' : '') + 'No phases in the sheet', detail: 'The table has no phase column and no total rows, so all ' + b.rows.length + ' grades are treated as one phase for now. Set the phase of each grade if the school splits them.', effect: 'Phase results may change' });
+    });
+    var derivedRows = 0; parsed.blocks.forEach(function (b) { b.rows.forEach(function (x) { if (x.G == null || x.H == null) derivedRows++; }); });
+    if (derivedRows) fixes.push({ kind: 'derived', what: 'Counts worked out from percentages', detail: derivedRows + ' row' + (derivedRows === 1 ? '' : 's') + ' gave percentages but not student counts, so the counts were worked out as percentage x assessed students, rounded to whole students.', effect: 'None' });
     if (parsed.hasFormulas === false) fixes.push({ kind: 'typed', what: 'Every result was typed in', detail: 'The sheet had no formulas, so nothing updated when a number changed. The new workbook uses formulas.', effect: '' });
     return { fixes: fixes, okRows: okRows, totalRows: totalRows };
   }
@@ -253,13 +282,15 @@ var Engine = (function () {
   }
   // Options for one unit: which of its bad grades to move, and the resulting judgements
   function unitOptions(parsed, c, u, base, dir) {
-    var bad = u.grades.filter(function (g) { return dir === 'up' ? isWeakish(g.judg, c) : g.judg === 'Outstanding'; });
+    var locked = c.simLocked || [];
+    var bad = u.grades.filter(function (g) { return locked.indexOf(g.id) < 0 && (dir === 'up' ? isWeakish(g.judg, c) : g.judg === 'Outstanding'); });
+    function capOk(g, n) { if (c.simMaxStudents != null && n > c.simMaxStudents) return false; if (c.simMaxPts != null && g.A && n / g.A * 100 > c.simMaxPts + 1e-9) return false; return true; }
     var opts = [];
     subsets(bad, 12).forEach(function (S) {
       var adds = {}, students = 0, ok = true;
       S.forEach(function (g) {
-        if (dir === 'up') { var nd = needAt(g.A, c.acc) - g.G; if (g.G + nd > g.A) ok = false; adds[g.id] = { G: g.G + nd }; students += nd; }
-        else { var dn = g.H - (needAt(g.A, c.out) - 1); adds[g.id] = { H: g.H - dn }; students += dn; }
+        if (dir === 'up') { var nd = needAt(g.A, c.acc) - g.G; if (g.G + nd > g.A || !capOk(g, nd)) ok = false; adds[g.id] = { G: g.G + nd }; students += nd; }
+        else { var dn = g.H - (needAt(g.A, c.out) - 1); if (!capOk(g, dn)) ok = false; adds[g.id] = { H: g.H - dn }; students += dn; }
       });
       if (!ok) return;
       opts.push({ adds: adds, students: students, extras: 0, moved: S.map(function (g) { return g.id; }) });
@@ -268,11 +299,14 @@ var Engine = (function () {
         var sumG = u.total.G + students, need = needAt(u.total.A, c.acc) - sumG;
         if (need > 0) {
           var a2 = JSON.parse(JSON.stringify(adds)), left = need;
-          var order = S.concat(u.grades.filter(function (g) { return S.indexOf(g) < 0 && !isWeakish(g.judg, c); }), u.grades.filter(function (g) { return S.indexOf(g) < 0 && isWeakish(g.judg, c); }));
+          var free = u.grades.filter(function (g) { return locked.indexOf(g.id) < 0; });
+          var order = S.concat(free.filter(function (g) { return S.indexOf(g) < 0 && !isWeakish(g.judg, c); }), free.filter(function (g) { return S.indexOf(g) < 0 && isWeakish(g.judg, c); }));
           order.forEach(function (g) {
             if (left <= 0) return;
             var cur = a2[g.id] ? a2[g.id].G : g.G;
             var cap = S.indexOf(g) >= 0 || !isWeakish(g.judg, c) ? g.A - cur : Math.max(0, needAt(g.A, c.acc) - 1 - cur);
+            if (c.simMaxStudents != null) cap = Math.min(cap, c.simMaxStudents - (cur - g.G));
+            if (c.simMaxPts != null && g.A) cap = Math.min(cap, Math.floor(c.simMaxPts / 100 * g.A + 1e-9) - (cur - g.G));
             var take = Math.min(cap, left); if (take > 0) { a2[g.id] = { G: cur + take }; left -= take; }
           });
           if (left === 0) opts.push({ adds: a2, students: students + need, extras: need, moved: S.map(function (g) { return g.id; }) });
@@ -287,13 +321,19 @@ var Engine = (function () {
     maxOptions = maxOptions || 6;
     var base = build(parsed, c);
     var chk0 = check(counted(base.items, c.basis), c);
-    if (chk0.weakOk && chk0.outOk) return { needed: false, base: base, check: chk0 };
-    var overrides = {};
+    var pinned = {}, ids = {}; base.items.forEach(function (it) { ids[it.id] = it; });
+    Object.keys(c.simPinned || {}).forEach(function (k) { if (ids[k] && ids[k].kind === 'grade') pinned[k] = Object.assign({}, c.simPinned[k]); });
+    var hasPinned = Object.keys(pinned).length > 0;
+    if (chk0.weakOk && chk0.outOk && !hasPinned) return { needed: false, base: base, check: chk0 };
+    var overrides = JSON.parse(JSON.stringify(pinned));
+    var chkP = check(counted(build(parsed, c, overrides).items, c.basis), c);
+    if (hasPinned && chkP.weakOk && chkP.outOk) { var only = [{ overrides: overrides, extras: 0 }]; return describe(only, true); }
     // Outstanding first (rare), then Weak
     var stages = [];
     if (!chk0.outOk) stages.push('down');
     stages.push('up');
-    var finalOpts = null, cur = base;
+    var finalOpts = null, cur = hasPinned ? build(parsed, c, overrides) : base;
+    if (!chkP.outOk) { if (stages[0] !== 'down') stages.unshift('down'); } else if (stages[0] === 'down') stages.shift();
     for (var si = 0; si < stages.length; si++) {
       var dir = stages[si];
       var chk = check(counted(cur.items, c.basis), c);
@@ -346,12 +386,14 @@ var Engine = (function () {
       });
       // verify against the full rules and keep the valid ones
       sols = sols.filter(function (s) { var m = build(parsed, c, s.overrides), k2 = check(counted(m.items, c.basis), c); return dir === 'up' ? (k2.weakOk && k2.outOk) : k2.outOk; });
-      if (!sols.length) return { needed: true, failed: true, base: base, check: chk0, reason: dir === 'up' ? 'weak' : 'out' };
+      if (!sols.length) return { needed: true, failed: true, base: base, check: chk0, reason: dir === 'up' ? 'weak' : 'out', limited: !!((c.simLocked || []).length || c.simMaxStudents != null || c.simMaxPts != null) };
+      if (dir === 'up') { var withExtra = sols.filter(function (s) { var m = build(parsed, c, s.overrides); return check(counted(m.items, c.basis), c).extraOk; }); if (withExtra.length) sols = withExtra; }
       if (dir === 'down') { overrides = sols[0].overrides; cur = build(parsed, c, overrides); }
       else finalOpts = sols;
     }
-    // describe options
-    var options = (finalOpts || []).slice(0, maxOptions).map(function (s) {
+    return describe(finalOpts || [], hasPinned);
+    function describe(finalOpts, hasPinned) {
+    var options = finalOpts.slice(0, maxOptions).map(function (s) {
       var m = build(parsed, c, s.overrides);
       var cells = [], changed = [], students = 0, maxPts = 0;
       m.items.forEach(function (it, i) {
@@ -367,11 +409,12 @@ var Engine = (function () {
       return { overrides: s.overrides, model: m, changed: changed, cells: cells, students: students, extras: s.extras, maxPts: maxPts,
         share: assessedAll ? students / assessedAll : 0, substantial: maxPts > c.substantialPts + 1e-9, check: check(counted(m.items, c.basis), c) };
     });
-    return { needed: true, base: base, check: chk0, options: options, total: (finalOpts || []).length };
+    return { needed: true, base: base, check: chk0, options: options, total: finalOpts.length, pinned: hasPinned, extraFail: options.length && !options[0].check.extraOk };
+    }
   }
 
   return { CATS: CATS, ROLES: ROLES, ROLE_LABEL: ROLE_LABEL, defaults: defaults, needAt: needAt, judge: judge, roundBy: roundBy, catFromPoints: catFromPoints,
     gridFromAoa: gridFromAoa, parse: parse, headerOptions: headerOptions, colLetter: colLetter, assessedOf: assessedOf,
-    build: build, counted: counted, dist: dist, check: check, findFixes: findFixes, simulate: simulate, isWeakish: isWeakish, pct: pct, fmt: fmt };
+    build: build, counted: counted, ruleLabel: ruleLabel, dist: dist, check: check, findFixes: findFixes, simulate: simulate, isWeakish: isWeakish, pct: pct, fmt: fmt };
 })();
 if (typeof module !== 'undefined') module.exports = Engine;

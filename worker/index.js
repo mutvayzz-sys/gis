@@ -2,7 +2,7 @@
 // The API key lives only in the Cloudflare secret ANTHROPIC_API_KEY. Nothing is stored.
 import PROMPT from '../src/prompt.txt';
 
-const TOOLS = new Set(['get_overview', 'read_cells', 'choose_sheet', 'set_header_row', 'set_column', 'set_rules', 'edit_number', 'set_cell', 'choose_option', 'go_to_step']);
+const TOOLS = new Set(['get_overview', 'read_cells', 'choose_sheet', 'set_header_row', 'set_column', 'set_rules', 'edit_number', 'set_cell', 'choose_option', 'go_to_step', 'set_cells', 'enter_rows', 'set_phase', 'add_rule', 'remove_rule', 'set_simulation_limits', 'set_simulated_numbers']);
 const MAX_BODY = 400 * 1024;
 
 function json(data, status = 200) {

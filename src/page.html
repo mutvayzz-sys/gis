@@ -276,35 +276,87 @@ table.edit tr.tot td { color: var(--fg-2); font-weight: 600; background: var(--s
 .foot { padding-block: var(--s6) var(--s7); border-top: 1px solid var(--border); font-size: var(--fs-sm); color: var(--fg-2); }
 
 /* assistant */
-.asst-li { margin-left: auto; }
-.asst-btn { background: var(--fg) !important; color: var(--bg) !important; padding: 7px 14px !important; font-weight: 600; }
-.asst-btn:hover { background: var(--fg-2) !important; }
 .asst-banner { display: flex; flex-wrap: wrap; gap: 10px; align-items: center; margin-top: var(--s4); padding: 10px 14px; border-radius: 8px; background: var(--sim-bg); font-size: var(--fs-sm); }
-.asst { position: fixed; top: 0; right: 0; bottom: 0; z-index: 20; width: min(420px, 100%); background: var(--bg); border-left: 1px solid var(--border); box-shadow: -16px 0 40px -20px rgb(0 0 0 / 0.25);
-  display: grid; grid-template-rows: auto auto auto 1fr auto auto; gap: var(--s3); padding: calc(env(safe-area-inset-top, 0px) + 16px) max(16px, env(safe-area-inset-right, 0px)) calc(env(safe-area-inset-bottom, 0px) + 16px) 16px;
-  transform: translateX(105%); transition: transform 240ms var(--ease); visibility: hidden; }
-.asst[data-open="true"] { transform: none; visibility: visible; }
-.asst-head { display: flex; justify-content: space-between; align-items: center; }
-.asst-head h2 { font-size: var(--fs-h3); }
-.asst-where { font-size: var(--fs-cap); color: var(--fg-2); }
+/* assistant: launcher + pop-up panel */
+.asst-fab { position: fixed; z-index: 21; right: max(16px, env(safe-area-inset-right, 0px)); bottom: calc(env(safe-area-inset-bottom, 0px) + 16px);
+  appearance: none; border: 0; font: inherit; font-size: var(--fs-sm); font-weight: 600; display: inline-flex; align-items: center; gap: 8px; min-height: 46px; padding: 0 18px 0 14px;
+  border-radius: 999px; background: var(--fg); color: var(--bg); cursor: pointer; box-shadow: 0 10px 30px -12px rgb(0 0 0 / 0.45); touch-action: manipulation;
+  transition: background-color 150ms ease, transform 160ms var(--ease); }
+.asst-fab svg { width: 20px; height: 20px; flex: none; }
+.asst-fab:active { transform: scale(0.97); }
+.asst-fab:focus-visible { outline: 2px solid var(--primary); outline-offset: 3px; }
+@media (hover: hover) and (pointer: fine) { .asst-fab:hover { background: var(--fg-2); } }
+.asst-fab .badge { min-width: 18px; height: 18px; padding: 0 5px; border-radius: 999px; background: var(--primary); color: var(--on-primary); font-size: 11px; display: inline-grid; place-items: center; font-variant-numeric: tabular-nums; }
+.asst { position: fixed; z-index: 22; right: max(16px, env(safe-area-inset-right, 0px)); bottom: calc(env(safe-area-inset-bottom, 0px) + 74px);
+  width: min(400px, calc(100vw - 32px)); height: min(620px, calc(100dvh - 110px)); background: var(--bg); border: 1px solid var(--border); border-radius: 14px;
+  box-shadow: 0 24px 60px -24px rgb(0 0 0 / 0.35), 0 2px 8px rgb(0 0 0 / 0.06);
+  display: grid; grid-template-rows: auto minmax(0, 1fr) auto auto; overflow: hidden;
+  transform-origin: bottom right; transform: scale(0.96) translateY(6px); opacity: 0; visibility: hidden; pointer-events: none;
+  transition: transform 200ms var(--ease), opacity 200ms var(--ease), visibility 0s linear 200ms; }
+.asst[data-open="true"] { transform: none; opacity: 1; visibility: visible; pointer-events: auto; transition: transform 200ms var(--ease), opacity 200ms var(--ease), visibility 0s; }
+@media (prefers-reduced-motion: reduce) { .asst, .asst[data-open="true"] { transition: opacity 150ms ease, visibility 0s linear 150ms; transform: none; } .asst[data-open="true"] { transition: opacity 150ms ease; } }
+.asst-head { display: flex; justify-content: space-between; align-items: center; gap: 8px; padding: 12px 12px 10px 16px; border-bottom: 1px solid var(--border); }
+.asst-head h2 { font-size: var(--fs-body); font-weight: 650; }
+.asst-head .sub { display: block; font-size: var(--fs-cap); color: var(--fg-2); font-weight: 400; margin-top: 2px; }
+.asst-x { appearance: none; border: 0; background: transparent; color: var(--fg-2); width: 34px; height: 34px; border-radius: 8px; display: grid; place-items: center; cursor: pointer; transition: background-color 150ms ease; }
+.asst-x:hover { background: var(--muted); } .asst-x svg { width: 18px; height: 18px; }
+.asst-body { overflow-y: auto; overscroll-behavior: contain; padding: 14px 16px; display: flex; flex-direction: column; gap: 10px; }
+.asst-hello { font-size: var(--fs-sm); color: var(--fg-2); }
+.asst-hello b { color: var(--fg); display: block; font-size: var(--fs-body); margin-bottom: 4px; }
 .asst-sugg { display: flex; flex-wrap: wrap; gap: 6px; }
-.chip-btn { appearance: none; font: inherit; font-size: var(--fs-cap); font-weight: 560; padding: 6px 10px; border-radius: 999px; border: 1px solid var(--border); background: var(--bg); color: var(--fg); cursor: pointer; transition: background-color 150ms ease; }
+.chip-btn { appearance: none; font: inherit; font-size: var(--fs-cap); font-weight: 560; padding: 7px 11px; border-radius: 999px; border: 1px solid var(--border); background: var(--bg); color: var(--fg); cursor: pointer; text-align: left; transition: background-color 150ms ease, transform 160ms var(--ease); }
 .chip-btn:hover { background: var(--muted); } .chip-btn:active { transform: scale(0.97); }
-.asst-log { overflow-y: auto; display: flex; flex-direction: column; gap: 8px; min-height: 0; overscroll-behavior: contain; }
+.asst-log { display: flex; flex-direction: column; gap: 8px; }
 .bub { max-width: 92%; padding: 9px 12px; border-radius: 12px; font-size: var(--fs-sm); white-space: pre-wrap; overflow-wrap: anywhere; }
 .bub.user { align-self: flex-end; background: var(--primary); color: var(--on-primary); border-bottom-right-radius: 4px; }
 .bub.bot { align-self: flex-start; background: var(--muted); border-bottom-left-radius: 4px; }
 .bub.note { align-self: center; font-size: var(--fs-cap); color: var(--fg-2); background: transparent; }
 .bub.err { color: var(--bad); }
 .bub .act { color: var(--fg-2); font-size: var(--fs-cap); margin-top: 4px; }
-.asst-changes { border-top: 1px solid var(--border); padding-top: var(--s2); max-height: 30vh; overflow-y: auto; }
-.asst-changes h3 { font-size: var(--fs-sm); margin-bottom: 6px; }
-.asst-changes ul { list-style: none; margin: 0; padding: 0; display: grid; gap: 6px; }
+.asst-changes { border-top: 1px solid var(--border); padding: 8px 16px; max-height: 32%; overflow-y: auto; }
+.asst-changes summary { cursor: pointer; font-size: var(--fs-sm); font-weight: 600; padding: 4px 0; list-style: none; display: flex; align-items: center; gap: 8px; }
+.asst-changes summary::-webkit-details-marker { display: none; }
+.asst-changes summary::after { content: ""; margin-left: auto; width: 7px; height: 7px; border-right: 1.5px solid var(--fg-2); border-bottom: 1.5px solid var(--fg-2); transform: rotate(45deg); transition: transform 160ms var(--ease); }
+.asst-changes[open] summary::after { transform: rotate(-135deg); }
+.asst-changes ul { list-style: none; margin: 6px 0 0; padding: 0; display: grid; gap: 6px; }
 .asst-changes li { display: grid; grid-template-columns: 9px minmax(0, 1fr) auto; gap: 8px; align-items: baseline; font-size: var(--fs-sm); }
-.asst-form { display: grid; gap: 8px; }
-.asst-form textarea { min-height: 64px; font-family: var(--font); font-size: var(--fs-sm); }
-@media (max-width: 760px) { .asst-li { margin-left: 0; } }
-@media (min-width: 1300px) { body.asst-open main, body.asst-open .top { margin-right: 440px; } }
+.asst-form { display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: 8px; align-items: end; padding: 10px 12px calc(env(safe-area-inset-bottom, 0px) + 12px); border-top: 1px solid var(--border); }
+.asst-form textarea { min-height: 42px; max-height: 140px; resize: none; font-family: var(--font); font-size: 16px; padding: 10px 12px; }
+.asst-where { grid-column: 1 / -1; font-size: 11px; color: var(--fg-3); }
+@media (max-width: 560px) {
+  .asst { inset: 0; width: 100%; height: 100dvh; border-radius: 0; border: 0; transform-origin: bottom center; transform: translateY(16px); padding-top: env(safe-area-inset-top, 0px); }
+  .asst-fab { padding: 0 16px 0 13px; }
+}
+body.asst-open .asst-fab { display: none; }
+@media (min-width: 561px) { body.asst-open .asst-fab { display: inline-flex; } }
+/* own rules + simulation limits */
+.xrules { list-style: none; margin: 0 0 var(--s3); padding: 0; display: grid; gap: 6px; }
+.xrules li { display: grid; grid-template-columns: 9px minmax(0, 1fr) auto auto; gap: 10px; align-items: center; font-size: var(--fs-sm); padding: 8px 10px; border-radius: 8px; background: var(--muted); }
+.xrules .st { font-size: var(--fs-cap); color: var(--fg-2); font-variant-numeric: tabular-nums; }
+.xrule-add { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; }
+.xrule-add select { min-height: 38px; }
+.xrule-add .pctin input { width: 72px; }
+.simlim summary { list-style: none; cursor: pointer; display: flex; flex-wrap: wrap; align-items: baseline; gap: 4px 12px; }
+.simlim summary::-webkit-details-marker { display: none; }
+.simlim summary h3 { margin: 0; }
+.simlim summary::after { content: ""; margin-left: auto; align-self: center; width: 8px; height: 8px; border-right: 1.5px solid var(--fg-2); border-bottom: 1.5px solid var(--fg-2); transform: rotate(45deg); transition: transform 160ms var(--ease); }
+.simlim[open] summary::after { transform: rotate(-135deg); }
+.lockgrid { display: flex; flex-wrap: wrap; gap: 6px; }
+.lockgrid label { display: inline-flex; gap: 6px; align-items: center; padding: 6px 10px; border-radius: 8px; border: 1px solid var(--border); font-size: var(--fs-sm); cursor: pointer; transition: background-color 150ms ease; }
+.lockgrid label:hover { background: var(--muted); }
+.lockgrid label:has(input:checked) { background: var(--fg); color: var(--bg); border-color: var(--fg); }
+/* row entry */
+.rows-tbl { width: 100%; border-collapse: separate; border-spacing: 0; font-size: var(--fs-sm); }
+.rows-tbl th { text-align: left; font-weight: 600; font-size: var(--fs-cap); color: var(--fg-2); padding: 0 6px 6px; white-space: nowrap; }
+.rows-tbl td { padding: 3px; }
+.rows-tbl input { width: 100%; min-width: 64px; min-height: 36px; padding: 0 8px; font-variant-numeric: tabular-nums; }
+.rows-tbl td.n { width: 28px; color: var(--fg-3); font-size: var(--fs-cap); text-align: right; padding-right: 6px; font-variant-numeric: tabular-nums; }
+.rows-tbl td.x { width: 40px; }
+.rows-tbl .rm { appearance: none; border: 0; background: transparent; color: var(--fg-3); width: 34px; height: 34px; border-radius: 8px; cursor: pointer; display: grid; place-items: center; transition: background-color 150ms ease, color 150ms ease; }
+.rows-tbl .rm:hover { background: var(--muted); color: var(--bad); } .rows-tbl .rm svg { width: 16px; height: 16px; }
+.rows-top { display: flex; flex-wrap: wrap; gap: var(--s3); align-items: end; justify-content: space-between; margin-bottom: var(--s3); }
+.rows-top .field { min-width: 200px; flex: 1 1 220px; max-width: 360px; }
+@media (max-width: 560px) { .rows-tbl th { white-space: normal; vertical-align: bottom; line-height: 1.2; } .rows-tbl input { min-width: 52px; padding: 0 6px; } .rows-tbl td.x { width: 34px; } }
 @media (max-width: 760px) {
   :root { --fs-h1: 1.75rem; --fs-h2: 1.375rem; }
   .grid2, .grid3, .choice, .kpis { grid-template-columns: minmax(0, 1fr); }
@@ -333,7 +385,6 @@ table.edit tr.tot td { color: var(--fg-2); font-weight: 600; background: var(--s
     <li><button type="button" data-go="4"><span class="n">4</span>Results</button></li>
     <li><button type="button" data-go="5"><span class="n">5</span>Simulation</button></li>
     <li><button type="button" data-go="6"><span class="n">6</span>Download</button></li>
-    <li class="asst-li"><button type="button" class="asst-btn" id="asst-open" aria-controls="asst" hidden>Ask the Assistant</button></li>
   </ol>
 </nav>
 
@@ -353,16 +404,21 @@ table.edit tr.tot td { color: var(--fg-2); font-weight: 600; background: var(--s
       <h3>Drop your Excel sheet here</h3>
       <div class="row" style="justify-content:center">
         <label class="btn primary big" for="file-in">Choose a File<input class="vh" id="file-in" type="file" accept=".xlsx,.xls,.csv,.tsv,.txt"></label>
-        <button class="btn big" type="button" id="open-paste">Paste Rows</button>
-        <button class="btn big quiet" type="button" id="blank">Type Numbers In</button>
+        <button class="btn big" type="button" id="open-rows" aria-controls="rows-card" aria-expanded="false">Enter Rows</button>
       </div>
       <p class="muted small">Need the layout? <button class="btn quiet" type="button" data-dl="template" style="min-height:30px;padding:0 8px">Download the blank template</button></p>
     </div>
     <div id="sheet-pick" class="card soft" hidden><h3>Which sheet?</h3><div class="sheets-pick" id="sheet-list"></div></div>
-    <div class="card soft" id="paste-card" hidden>
-      <label for="paste-box"><b>Paste from Excel</b> <span class="muted small">Include the header row. Or use plain rows: Grade, Phase, Students, Expected or better, Better than expected.</span></label>
-      <textarea id="paste-box" autocomplete="off" spellcheck="false" placeholder="Grade	Phase	Students	Expected or better	Better than expected…"></textarea>
-      <div class="row"><button class="btn" type="button" id="use-paste">Use These Rows</button></div>
+    <div class="card soft" id="rows-card" hidden>
+      <div class="rows-top">
+        <label class="field"><span>Subject or table name</span><input type="text" id="rows-title" placeholder="For example: Mathematics" autocomplete="off"></label>
+        <div><span class="muted small" style="display:block;margin-bottom:6px">Progress is given as</span>
+          <div class="seg" role="radiogroup" aria-label="Progress is given as"><label><input type="radio" name="rows-kind" value="counts" checked>Numbers of students</label><label><input type="radio" name="rows-kind" value="pct">Percentages</label></div></div>
+      </div>
+      <p class="muted small" style="margin-bottom:8px">Type in the boxes, or copy cells from Excel and paste them into any box. They fill across and down.</p>
+      <div class="tbl-scroll"><table class="rows-tbl" id="rows-tbl"></table></div>
+      <div class="row" style="margin-top:var(--s3)"><button class="btn" type="button" id="rows-add">Add Row</button><button class="btn quiet" type="button" id="rows-clear">Clear</button><span style="flex:1"></span><button class="btn primary" type="button" id="rows-use">Use These Rows</button></div>
+    </div>
     </div>
     <p class="msg" id="msg1" aria-live="polite"></p>
     <div class="card soft">
@@ -454,8 +510,19 @@ table.edit tr.tot td { color: var(--fg-2); font-weight: 600; background: var(--s
           <label class="field"><span>Title of the simulated sheet</span><input type="text" id="sim-title" spellcheck="false"></label>
         </div>
       </details>
-      <div class="row"><button class="btn quiet" type="button" id="reset-rules">Reset to the Brief’s Rules</button></div>
     </div>
+    <div class="card">
+      <h3>Your own rules</h3>
+      <p class="muted small">Add any extra check the school wants, such as “at least 50% Good or better”. It is checked on the results and the simulation.</p>
+      <ul class="xrules" id="xrules"></ul>
+      <div class="xrule-add">
+        <select id="xr-op" aria-label="At least or no more than"><option value="min">At least</option><option value="max">No more than</option></select>
+        <span class="pctin"><input type="number" id="xr-share" min="0" max="100" step="1" inputmode="decimal" aria-label="Percentage" placeholder="50"><span>%</span></span>
+        <select id="xr-cats" aria-label="Judgements"><option value="Outstanding,Very Good,Good">Good or better</option><option value="Outstanding,Very Good">Very Good or better</option><option value="Outstanding,Very Good,Good,Acceptable">Acceptable or better</option><option value="Outstanding">Outstanding</option><option value="Very Good">Very Good</option><option value="Good">Good</option><option value="Acceptable">Acceptable</option><option value="Weak,Very Weak">Weak or worse</option><option value="Very Weak">Very Weak</option></select>
+        <button class="btn" type="button" id="xr-add">Add Rule</button>
+      </div>
+    </div>
+    <div class="row"><button class="btn quiet" type="button" id="reset-rules">Reset to the Brief’s Rules</button></div>
     <div class="step-nav"><button class="btn quiet" type="button" data-go="2">Back</button><button class="btn primary" type="button" data-go="4">Next: Results</button></div>
   </section>
 
@@ -476,6 +543,14 @@ table.edit tr.tot td { color: var(--fg-2); font-weight: 600; background: var(--s
   <section class="step" id="step-5" data-step="5" aria-labelledby="h5s" hidden>
     <div class="step-head"><h2 id="h5s">The simulated scenario</h2><p class="notice"><span class="dot" aria-hidden="true"></span>For internal planning only. Not actual results.</p></div>
     <div id="sim-status"></div>
+    <details class="card simlim" id="simlim"><summary><h3>Limits for the simulation</h3><span class="muted small" id="simlim-sum"></span></summary>
+      <div class="grid2" style="margin-top:var(--s3)">
+        <label class="field"><span>Add at most this many students to one grade</span><input type="number" id="sl-stu" min="0" step="1" inputmode="numeric" placeholder="No limit"></label>
+        <label class="field"><span>Move one grade by at most</span><span class="pctin"><input type="number" id="sl-pts" min="0" max="100" step="1" inputmode="decimal" placeholder="No limit"><span>percentage points</span></span></label>
+      </div>
+      <div class="field" style="margin-top:var(--s3)"><span>Grades the simulation must leave alone</span><div class="lockgrid" id="sl-lock"></div></div>
+      <div id="sl-pinned"></div>
+    </details>
     <div id="sim-body">
       <div class="card"><h3>Choose an option</h3><div class="opts" id="opts"></div><p class="muted small" id="opts-note"></p></div>
       <div class="grid2" style="margin-top:var(--s4)">
@@ -501,19 +576,17 @@ table.edit tr.tot td { color: var(--fg-2); font-weight: 600; background: var(--s
   </section>
 </main>
 
-<aside class="asst" id="asst" data-open="false" aria-hidden="true" aria-labelledby="asst-h">
-  <div class="asst-head"><h2 id="asst-h">Assistant</h2><button type="button" class="btn quiet" id="asst-close">Close</button></div>
-  <p class="asst-where" id="asst-where"></p>
-  <div class="asst-sugg" id="asst-sugg">
-    <button type="button" class="chip-btn" data-q="My sheet wasn't read properly. Please check it and fix it.">My sheet wasn't read properly</button>
-    <button type="button" class="chip-btn" data-q="Explain the results in simple terms.">Explain the results</button>
-    <button type="button" class="chip-btn" data-q="Use round down for phase averages.">Use round down</button>
-    <button type="button" class="chip-btn" data-q="Only count the grade judgements toward the limits.">Only count grades</button>
+<button type="button" class="asst-fab" id="asst-open" aria-controls="asst" aria-expanded="false" hidden><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M20 12.5c0 3.6-3.6 6.5-8 6.5-1 0-2-.15-2.9-.43L5 20l1.2-3.3C4.8 15.6 4 14.1 4 12.5 4 8.9 7.6 6 12 6s8 2.9 8 6.5Z"/></svg><span>Ask the Assistant</span><span class="badge" id="asst-badge" hidden></span></button>
+<section class="asst" id="asst" data-open="false" aria-hidden="true" role="dialog" aria-modal="false" aria-labelledby="asst-h">
+  <div class="asst-head"><h2 id="asst-h">Assistant<span class="sub">Fixes sheets and changes anything on this page</span></h2><button type="button" class="asst-x" id="asst-close" aria-label="Close the assistant"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" aria-hidden="true"><path d="M6 6l12 12M18 6L6 18"/></svg></button></div>
+  <div class="asst-body" id="asst-body">
+    <div class="asst-hello" id="asst-hello"><b>What do you need?</b>Tell me what's wrong or what to change. I make the change on the page and list it below so you can undo it.</div>
+    <div class="asst-sugg" id="asst-sugg"></div>
+    <div class="asst-log" id="asst-log" aria-live="polite"></div>
   </div>
-  <div class="asst-log" id="asst-log" aria-live="polite"></div>
-  <div class="asst-changes" id="asst-changes" hidden><h3>What it changed</h3><ul id="asst-changes-list"></ul></div>
-  <form class="asst-form" id="asst-form"><label for="asst-in" class="sr">Message</label><textarea id="asst-in" rows="2" placeholder="Describe what's wrong or what to change…" autocomplete="off"></textarea><div class="row" style="justify-content:flex-end"><button type="button" class="btn" id="asst-stop" hidden>Stop</button><button type="submit" class="btn primary" id="asst-send">Send</button></div></form>
-</aside>
+  <details class="asst-changes" id="asst-changes" hidden><summary><span class="dot sim" aria-hidden="true"></span><span id="asst-changes-t">What it changed</span></summary><ul id="asst-changes-list"></ul></details>
+  <form class="asst-form" id="asst-form"><label for="asst-in" class="sr">Message</label><textarea id="asst-in" rows="1" placeholder="Ask or describe a change…" autocomplete="off"></textarea><span><button type="button" class="btn" id="asst-stop" hidden>Stop</button><button type="submit" class="btn primary" id="asst-send">Send</button></span><p class="asst-where" id="asst-where"></p></form>
+</section>
 
 <footer class="wrap foot"><p>Everything is calculated in your browser. No sheet data is stored in this page. The assistant sends what it needs to Claude only when you ask it something.</p></footer>
 

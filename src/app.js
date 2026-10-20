@@ -36,7 +36,7 @@
   }
   function msg(id, t, k) { var m = $(id); if (!m) return; m.textContent = t || ''; m.className = 'msg' + (k ? ' ' + k : ''); }
   function useWorkbook(wb, name, orig) {
-    st.src = wb; st.origWb = orig || null; st.headerRow = null; st.srcName = name; st.edits = {}; st.manual = null; st.sel = 0; st.wb = null;
+    st.src = wb; st.origWb = orig || null; st.headerRow = null; st.srcName = name; st.edits = {}; st.manual = null; st.sel = 0; st.wb = null; st.cfg.simLocked = []; st.cfg.simPinned = {};
     var withTables = wb.worksheets.filter(function (ws) { return E.parse(gridFromWs(ws), { sheetName: ws.name }).blocks.length; });
     if (!withTables.length) {
       var first = wb.worksheets.filter(function (ws) { return gridFromWs(ws).maxR > 0; })[0];
@@ -56,7 +56,7 @@
     go(2);
   }
   function pickSheet(name) {
-    st.sheetName = name; st.headerRow = null; st.grid = gridFromWs(st.src.getWorksheet(name)); st.cfg.columns = {}; st.edits = {}; st.sel = 0;
+    st.sheetName = name; st.headerRow = null; st.grid = gridFromWs(st.src.getWorksheet(name)); st.cfg.columns = {}; st.edits = {}; st.sel = 0; st.cfg.simLocked = []; st.cfg.simPinned = {};
     Array.prototype.forEach.call(document.querySelectorAll('[data-sheet]'), function (b) { b.classList.toggle('primary', b.dataset.sheet === name); });
     recompute();
   }
@@ -89,35 +89,82 @@
   ['dragleave', 'drop'].forEach(function (t) { drop.addEventListener(t, function (e) { e.preventDefault(); drop.classList.remove('over'); }); });
   drop.addEventListener('drop', function (e) { readFile(e.dataTransfer && e.dataTransfer.files && e.dataTransfer.files[0]); });
   $('sheet-list').addEventListener('click', function (e) { var b = e.target.closest('[data-sheet]'); if (b) pickSheet(b.dataset.sheet); });
-  $('open-paste').addEventListener('click', function () { var c = $('paste-card'); c.hidden = !c.hidden; if (!c.hidden) $('paste-box').focus(); });
-  $('use-paste').addEventListener('click', function () {
-    var t = $('paste-box').value; if (!t.trim()) { msg('msg1', 'Paste some rows first.', 'bad'); return; }
-    var lines = t.replace(/\r/g, '').split('\n').filter(function (l) { return l.trim(); });
-    var sep = lines.some(function (l) { return l.indexOf('\t') >= 0; }) ? '\t' : ',';
-    var aoa = lines.map(function (l) { return l.split(sep).map(function (v) { v = v.trim(); return v === '' ? null : (isNaN(+v) ? v : +v); }); });
-    var wb = aoaToWorkbook([{ name: 'Pasted', aoa: aoa }]), orig = aoaToWorkbook([{ name: 'Pasted', aoa: aoa }]);
-    if (!E.parse(gridFromWs(wb.worksheets[0]), {}).blocks.length) {
-      // plain rows: Grade, Phase, Students, Expected or better, Better than expected
-      var rows = aoa.filter(function (r) { return r[0] != null && r[2] != null; }).map(function (r) { return { grade: String(r[0]), phase: r[1], E: +r[2], G: +r[3], H: +r[4] }; });
-      if (!rows.length) { msg('msg1', 'Those rows could not be read. Include the header row, or use: Grade, Phase, Students, Expected or better, Better than expected.', 'bad'); return; }
-      wb = Book.synthetic(rows, 'Pasted data'); orig = Book.synthetic(rows, 'Pasted data');
-    }
-    $('paste-box').value = ''; $('paste-card').hidden = true;
-    useWorkbook(wb, 'pasted rows', orig);
-  });
-  $('blank').addEventListener('click', function () {
-    st.manual = []; for (var g = 1; g <= 12; g++) st.manual.push({ grade: 'G' + g, phase: g <= 5 ? 2 : g <= 8 ? 3 : 4, E: null, G: null, H: null });
-    st.src = null; st.srcName = 'numbers typed in'; st.edits = {}; st.sel = 0;
-    manualToSource(); go(2);
-  });
-  function manualToSource() {
-    var rows = st.manual.filter(function (r) { return r.E > 0 && r.G != null && r.H != null; });
-    var rs = rows.length ? rows : [{ grade: 'G1', phase: 1, E: 1, G: 0, H: 0 }];
-    st.src = Book.synthetic(rs, 'Your numbers'); st.origWb = Book.synthetic(rs, 'Your numbers');
-    st.sheetName = 'Data'; st.grid = gridFromWs(st.src.getWorksheet('Data'));
-    st.empty = !rows.length;
-    recompute();
+  /* ---------- entering rows by hand (or pasting cells from Excel) ---------- */
+  var ROWS = { kind: 'counts', title: '', list: [] };
+  var RKEYS = ['phase', 'grade', 'E', 'G', 'H'];
+  function blankRow() { return { phase: '', grade: '', E: '', G: '', H: '' }; }
+  function ensureRows(n) { while (ROWS.list.length < n) ROWS.list.push(blankRow()); }
+  function rowsHead() { return ROWS.kind === 'pct' ? ['Phase', 'Grade', 'Students', '% expected or better', '% better than expected'] : ['Phase', 'Grade', 'Students', 'Expected or better', 'Better than expected']; }
+  var X_ICON = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" aria-hidden="true"><path d="M6 6l12 12M18 6L6 18"/></svg>';
+  function renderRows() {
+    ensureRows(4);
+    var hd = rowsHead();
+    var h = '<thead><tr><th></th>' + hd.map(function (t) { return '<th scope="col">' + esc(t) + '</th>'; }).join('') + '<th><span class="sr">Remove</span></th></tr></thead><tbody>';
+    ROWS.list.forEach(function (r, i) {
+      h += '<tr><td class="n">' + (i + 1) + '</td>' + RKEYS.map(function (k, j) {
+        var numK = j >= 2;
+        return '<td><input type="text" data-ri="' + i + '" data-rk="' + k + '"' + (numK ? ' inputmode="decimal"' : '') + ' value="' + esc(r[k]) + '" aria-label="Row ' + (i + 1) + ' ' + esc(hd[j]) + '" autocomplete="off"' + (k === 'grade' && i === 0 ? ' placeholder="Grade 1"' : k === 'phase' && i === 0 ? ' placeholder="2"' : '') + '></td>';
+      }).join('') + '<td class="x"><button type="button" class="rm" data-rm="' + i + '" aria-label="Remove row ' + (i + 1) + '">' + X_ICON + '</button></td></tr>';
+    });
+    $('rows-tbl').innerHTML = h + '</tbody>';
+    $('rows-title').value = ROWS.title;
+    Array.prototype.forEach.call(document.querySelectorAll('input[name="rows-kind"]'), function (x) { x.checked = x.value === ROWS.kind; });
   }
+  function openRows(open) {
+    var c = $('rows-card'); c.hidden = !open; $('open-rows').setAttribute('aria-expanded', open ? 'true' : 'false');
+    if (open) { renderRows(); c.scrollIntoView({ block: 'start', behavior: matchMedia('(prefers-reduced-motion: reduce)').matches ? 'auto' : 'smooth' }); var f = c.querySelector('input[data-rk="grade"]'); if (f) f.focus({ preventScroll: true }); }
+  }
+  $('open-rows').addEventListener('click', function () { openRows($('rows-card').hidden); });
+  $('rows-add').addEventListener('click', function () { ROWS.list.push(blankRow()); renderRows(); var ins = $('rows-tbl').querySelectorAll('input[data-rk="grade"]'); ins[ins.length - 1].focus(); });
+  $('rows-clear').addEventListener('click', function () { ROWS.list = []; ROWS.title = ''; renderRows(); });
+  $('rows-title').addEventListener('input', function () { ROWS.title = this.value; });
+  Array.prototype.forEach.call(document.querySelectorAll('input[name="rows-kind"]'), function (x) { x.addEventListener('change', function () { ROWS.kind = this.value; renderRows(); }); });
+  $('rows-tbl').addEventListener('input', function (e) { var t = e.target; if (t.dataset.ri == null) return; ROWS.list[+t.dataset.ri][t.dataset.rk] = t.value; });
+  $('rows-tbl').addEventListener('click', function (e) { var b = e.target.closest('[data-rm]'); if (!b) return; ROWS.list.splice(+b.dataset.rm, 1); renderRows(); });
+  function cellVal(v) { v = String(v == null ? '' : v).trim(); return v; }
+  $('rows-tbl').addEventListener('paste', function (e) {
+    var t = e.target; if (t.dataset.ri == null) return;
+    var txt = (e.clipboardData || window.clipboardData).getData('text'); if (!txt || !/[\t\n]/.test(txt.replace(/\n$/, ''))) return;
+    e.preventDefault();
+    var lines = txt.replace(/\r/g, '').replace(/\n+$/, '').split('\n');
+    var aoa = lines.map(function (l) { return l.split('\t').map(function (v) { v = v.trim(); return v === '' ? null : (isNaN(+v) ? v : +v); }); });
+    // A pasted block that includes its own headings goes through the full reader
+    if (E.parse(E.gridFromAoa(aoa), {}).blocks.length) { var w1 = aoaToWorkbook([{ name: 'Pasted', aoa: aoa }]); openRows(false); useWorkbook(w1, 'pasted cells', aoaToWorkbook([{ name: 'Pasted', aoa: aoa }])); return; }
+    var r0 = +t.dataset.ri, c0 = RKEYS.indexOf(t.dataset.rk);
+    lines.forEach(function (l, i) {
+      ensureRows(r0 + i + 1);
+      l.split('\t').forEach(function (v, j) { var k = RKEYS[c0 + j]; if (k) ROWS.list[r0 + i][k] = cellVal(v); });
+    });
+    renderRows();
+    msg('msg1', 'Pasted ' + lines.length + ' row' + (lines.length === 1 ? '' : 's') + '.', 'ok');
+  });
+  function numIn(v) { v = String(v == null ? '' : v).replace(/[,\s%]/g, ''); if (v === '') return null; var n = +v; return isFinite(n) ? n : NaN; }
+  function useRows(src) {
+    var pctK = ROWS.kind === 'pct', out = [], bad = [];
+    ROWS.list.forEach(function (r, i) {
+      if (!String(r.grade || '').trim() && !String(r.E || '').trim()) return;
+      var E1 = numIn(r.E), G1 = numIn(r.G), H1 = numIn(r.H), n = i + 1;
+      if (!String(r.grade || '').trim()) { bad.push('row ' + n + ' has no grade'); return; }
+      if (!(E1 > 0) || Math.round(E1) !== E1) { bad.push('row ' + n + ' needs a whole number of students'); return; }
+      if (G1 == null || isNaN(G1) || H1 == null || isNaN(H1)) { bad.push('row ' + n + ' is missing a progress number'); return; }
+      if (pctK) {
+        if (G1 > 100 || H1 > 100) { bad.push('row ' + n + ' has a percentage over 100'); return; }
+        if (H1 > G1) { bad.push('row ' + n + ': better than expected cannot be more than expected or better'); return; }
+        out.push({ phase: String(r.phase || '').trim(), grade: String(r.grade).trim(), E: E1, I: G1, J: H1 });
+      } else {
+        if (G1 > E1 || H1 > E1) { bad.push('row ' + n + ' has more students making progress than in the group'); return; }
+        if (H1 > G1) { bad.push('row ' + n + ': better than expected cannot be more than expected or better'); return; }
+        out.push({ phase: String(r.phase || '').trim(), grade: String(r.grade).trim(), E: E1, G: G1, H: H1 });
+      }
+    });
+    if (bad.length) { msg('msg1', 'Please check: ' + bad.join('; ') + '.', 'bad'); return { ok: false, problems: bad }; }
+    if (!out.length) { msg('msg1', 'Fill in at least one row: a grade, the number of students and the two progress numbers.', 'bad'); return { ok: false, problems: ['no rows'] }; }
+    var title = ROWS.title.trim() || 'Progress';
+    var w = Book.synthetic(out, title, { pct: pctK }), o = Book.synthetic(out, title, { pct: pctK });
+    useWorkbook(w, src || 'rows typed in', o);
+    return { ok: true, rows: out.length };
+  }
+  $('rows-use').addEventListener('click', function () { useRows(); });
 
   /* ---------- the pipeline ---------- */
   var timer = null;
@@ -173,7 +220,6 @@
   var ROLE_COLOR = { grade: '#1f3864', E: '#ffd400', F: '#b4b4b9', G: '#0000da', H: '#5656ec', phase: '#8fd19e', group: '#f6b26b', I: '#cfd5ff', J: '#cfd5ff', K: '#d92b2b' };
   var ROLE_SHORT = { phase: 'Phase', group: 'Group', grade: 'Grade', E: 'Students', F: '% assessed', G: 'Expected or better', H: 'Better than expected', I: '% expected or better', J: '% better than expected', K: 'Judgement' };
   function renderCheck() {
-    if (st.manual) { renderManual(); return; }
     var p = st.parsed; if (!p) return;
     var nG = 0, nP = 0;
     if (st.base) { nG = st.base.items.filter(function (x) { return x.kind === 'grade'; }).length; nP = st.base.items.length - nG; }
@@ -213,38 +259,20 @@
     st.base.units.forEach(function (u) {
       u.grades.forEach(function (g) {
         function inp(k) { return '<input type="number" min="0" step="1" inputmode="numeric" data-edit="' + esc(g.id) + '" data-k="' + k + '" value="' + (g[k] == null ? '' : g[k]) + '" aria-label="' + esc(g.grade + ' ' + k) + '">'; }
-        h += '<tr><td>' + esc(g.grade) + '</td><td>' + esc(g.phase) + '</td><td>' + inp('E') + '</td><td>' + (g.A == null ? '' : g.A) + '</td><td>' + inp('G') + '</td><td>' + inp('H') + '</td><td>' + tag(g.judg) + '</td></tr>';
+        h += '<tr><td>' + esc(g.grade) + '</td><td><input type="text" data-edit="' + esc(g.id) + '" data-k="phase" value="' + esc(g.phase) + '" aria-label="' + esc(g.grade + ' phase') + '" style="width:64px"></td><td>' + inp('E') + '</td><td>' + (g.A == null ? '' : g.A) + '</td><td>' + inp('G') + '</td><td>' + inp('H') + '</td><td>' + tag(g.judg) + '</td></tr>';
       });
       if (u.total) h += '<tr class="tot"><td>Total</td><td>' + esc(u.phase) + '</td><td>' + u.total.E + '</td><td>' + u.total.A + '</td><td>' + u.total.G + '</td><td>' + u.total.H + '</td><td>' + tag(u.total.judg) + '</td></tr>';
     });
     $('editor').innerHTML = h + '</tbody>';
   }
-  function renderManual() {
-    $('found').innerHTML = '<div><b>' + st.manual.length + '</b><span>rows to fill in</span></div>';
-    $('headstrip').innerHTML = '<p class="muted small">Typing numbers in, so there are no columns to match.</p>'; $('colmap').innerHTML = '';
-    var h = '<thead><tr><th>Grade</th><th>Phase</th><th>Students</th><th>Expected or better</th><th>Better than expected</th><th></th></tr></thead><tbody>';
-    st.manual.forEach(function (r, i) {
-      function inp(k, t) { return '<input type="' + (t || 'number') + '" data-man="' + i + '" data-k="' + k + '" value="' + (r[k] == null ? '' : esc(r[k])) + '" aria-label="' + esc(r.grade + ' ' + k) + '"' + (t ? ' style="width:70px"' : ' min="0" step="1" inputmode="numeric"') + '>'; }
-      h += '<tr><td>' + inp('grade', 'text') + '</td><td>' + inp('phase', 'text') + '</td><td>' + inp('E') + '</td><td>' + inp('G') + '</td><td>' + inp('H') + '</td><td>' + (i === st.manual.length - 1 ? '<button class="btn quiet" type="button" id="add-man">Add Row</button>' : '') + '</td></tr>';
-    });
-    $('editor').innerHTML = h + '</tbody>';
-  }
   $('editor').addEventListener('input', function (e) {
     var t = e.target;
-    if (t.dataset.man != null) {
-      var r = st.manual[+t.dataset.man], k = t.dataset.k;
-      r[k] = (k === 'grade' || k === 'phase') ? t.value.trim() : (t.value === '' ? null : Math.max(0, Math.round(+t.value)));
-      clearTimeout(timer); timer = setTimeout(function () { manualToSource(); renderStepper(); }, 200); return;
-    }
     if (t.dataset.edit) {
       var id = t.dataset.edit, k2 = t.dataset.k, row = id.split(':');
-      var v = t.value === '' ? null : Math.max(0, Math.round(+t.value));
+      var v = k2 === 'phase' ? (t.value.trim() || null) : (t.value === '' ? null : Math.max(0, Math.round(+t.value)));
       (st.edits[id] = st.edits[id] || {})[k2] = v;
       clearTimeout(timer); timer = setTimeout(function () { var y = window.scrollY; recompute(); window.scrollTo(0, y); }, 400);
     }
-  });
-  $('editor').addEventListener('click', function (e) {
-    if (e.target.id === 'add-man') { var l = st.manual[st.manual.length - 1]; var m = l ? /(\d+)/.exec(l.grade) : null; st.manual.push({ grade: m ? 'G' + (+m[1] + 1) : 'G1', phase: l ? l.phase : 1, E: null, G: null, H: null }); renderManual(); }
   });
 
   /* ---------- step 3: rules ---------- */
@@ -277,7 +305,18 @@
     var rn = E.roundBy(avg, c.rounding);
     $('round-eg').innerHTML = 'Example: average 2.5<span class="arrow">→</span>' + ex + '<span class="arrow">→</span>' + rn + '<span class="arrow">→</span>' + tag(E.catFromPoints(rn, c));
     if (st.base) { ['both', 'grades', 'phases'].forEach(function (k) { $('n-' + k).textContent = E.counted(st.base.items, k).length; }); }
+    var xk = st.base ? E.check(E.counted(st.base.items, c.basis), c).extra : [];
+    $('xrules').innerHTML = (c.extraRules || []).map(function (r, i) {
+      var k = xk[i];
+      return '<li><span class="dot ' + (k ? (k.ok ? 'ok' : 'bad') : '') + '" aria-hidden="true"></span><span>' + esc(r.label || E.ruleLabel(r)) + '</span><span class="st">' + (k ? (k.ok ? 'Met' : 'Not met') + ': ' + k.count + ' of ' + E.counted(st.base.items, c.basis).length + (r.op === 'min' ? ', need ' + k.limit : ', allowed ' + k.limit) : '') + '</span><button type="button" class="btn quiet" data-xr-rm="' + i + '">Remove</button></li>';
+    }).join('') || '<li style="background:transparent;padding:0;display:block" class="muted">None yet.</li>';
   }
+  $('xr-add').addEventListener('click', function () {
+    var v = parseFloat($('xr-share').value); if (isNaN(v) || v < 0 || v > 100) { $('xr-share').focus(); return; }
+    st.cfg.extraRules = (st.cfg.extraRules || []).concat([{ op: $('xr-op').value, share: v / 100, cats: $('xr-cats').value.split(',') }]);
+    $('xr-share').value = ''; st.sel = 0; renderRules(); soon();
+  });
+  $('xrules').addEventListener('click', function (e) { var b = e.target.closest('[data-xr-rm]'); if (!b) return; st.cfg.extraRules.splice(+b.dataset.xrRm, 1); renderRules(); soon(); });
   function num01(id, fb) { var v = parseFloat($(id).value); return isNaN(v) ? fb : Math.max(0, Math.min(100, v)) / 100; }
   ['r-acc', 'r-vw', 'r-good', 'r-vg', 'r-out', 'cap-w', 'cap-o'].forEach(function (id) {
     $(id).addEventListener('input', function () {
@@ -336,6 +375,7 @@
     $('kpis').innerHTML =
       '<div class="kpi ' + (k.weakOk ? 'ok' : 'bad') + '"><span class="l">Weak</span><span class="v">' + k.weak + ' of ' + k.n + '</span><span class="s">' + pc(k.n ? k.weak / k.n : 0) + ' of ' + basisTxt + '. Limit: ' + k.maxW + '.</span></div>' +
       '<div class="kpi ' + (k.outOk ? 'ok' : 'bad') + '"><span class="l">Outstanding</span><span class="v">' + k.out + ' of ' + k.n + '</span><span class="s">' + pc(k.n ? k.out / k.n : 0) + '. Limit: ' + k.maxO + '.</span></div>' +
+      k.extra.map(function (x) { return '<div class="kpi ' + (x.ok ? 'ok' : 'bad') + '"><span class="l">' + esc(x.label) + '</span><span class="v">' + x.count + ' of ' + k.n + '</span><span class="s">' + (x.op === 'min' ? 'Needs ' : 'Allowed: ') + x.limit + '. ' + (x.ok ? 'Met.' : 'Not met.') + '</span></div>'; }).join('') +
       '<div class="kpi"><span class="l">Fixed in the sheet</span><span class="v">' + fx.fixes.length + '</span><span class="s">' + (fx.fixes.length ? 'No student numbers changed' : 'Nothing needed fixing') + '</span></div>';
     $('tiles-actual').innerHTML = tilesBlock(m, null, c);
     // bars
@@ -368,15 +408,43 @@
   }
 
   /* ---------- step 5: simulation ---------- */
+  function renderSimLimits() {
+    var c = st.cfg, grades = st.base.items.filter(function (x) { return x.kind === 'grade'; }), multi = st.parsed.blocks.length > 1;
+    if (document.activeElement !== $('sl-stu')) $('sl-stu').value = c.simMaxStudents == null ? '' : c.simMaxStudents;
+    if (document.activeElement !== $('sl-pts')) $('sl-pts').value = c.simMaxPts == null ? '' : c.simMaxPts;
+    $('sl-lock').innerHTML = grades.map(function (g) { return '<label><input type="checkbox" class="vh" data-lock="' + esc(g.id) + '"' + ((c.simLocked || []).indexOf(g.id) >= 0 ? ' checked' : '') + '>' + esc((multi ? g.block + ': ' : '') + g.grade) + '</label>'; }).join('');
+    var byId = {}; grades.forEach(function (g) { byId[g.id] = g; });
+    var pins = Object.keys(c.simPinned || {}).filter(function (k) { return byId[k]; });
+    $('sl-pinned').innerHTML = pins.length ? '<div class="field" style="margin-top:var(--s3)"><span>Your own simulated changes</span><ul class="xrules">' + pins.map(function (k) { var g = byId[k], p = c.simPinned[k]; return '<li><span class="dot sim" aria-hidden="true"></span><span><b>' + esc(g.grade) + '</b>' + (p.G != null ? ': expected or better ' + g.G + ' → ' + p.G : '') + (p.H != null ? (p.G != null ? ',' : ':') + ' better than expected ' + g.H + ' → ' + p.H : '') + '</span><span></span><button type="button" class="btn quiet" data-unpin="' + esc(k) + '">Remove</button></li>'; }).join('') + '</ul></div>' : '';
+    var parts = [];
+    if (c.simMaxStudents != null) parts.push('at most ' + c.simMaxStudents + ' students per grade');
+    if (c.simMaxPts != null) parts.push('at most ' + c.simMaxPts + ' points per grade');
+    if ((c.simLocked || []).length) parts.push(c.simLocked.length + ' grade' + (c.simLocked.length === 1 ? '' : 's') + ' left alone');
+    if (pins.length) parts.push(pins.length + ' change' + (pins.length === 1 ? '' : 's') + ' of your own');
+    $('simlim-sum').textContent = parts.length ? parts.join(', ') : 'None set. Any grade can change.';
+    if (parts.length) $('simlim').open = true;
+  }
+  function numOrNull(v) { var n = parseFloat(v); return isNaN(n) || n < 0 ? null : n; }
+  $('sl-stu').addEventListener('input', function () { st.cfg.simMaxStudents = numOrNull(this.value); st.sel = 0; soon(); });
+  $('sl-pts').addEventListener('input', function () { st.cfg.simMaxPts = numOrNull(this.value); st.sel = 0; soon(); });
+  $('sl-lock').addEventListener('change', function (e) { var t = e.target; if (!t.dataset.lock) return; var L = (st.cfg.simLocked || []).filter(function (x) { return x !== t.dataset.lock; }); if (t.checked) L.push(t.dataset.lock); st.cfg.simLocked = L; st.sel = 0; recompute(); });
+  $('sl-pinned').addEventListener('click', function (e) { var b = e.target.closest('[data-unpin]'); if (!b) return; delete st.cfg.simPinned[b.dataset.unpin]; st.sel = 0; recompute(); });
   function renderSim() {
     var c = st.cfg, s = st.sim;
+    renderSimLimits();
     if (!s.needed) { $('sim-status').innerHTML = '<div class="big-flag ok"><span class="dot ok"></span><span><b>Already within both limits.</b> The actual results meet the targets, so nothing needs simulating.</span></div>'; $('sim-body').hidden = true; return; }
+    if (s.failed && s.limited) { $('sim-status').innerHTML = '<div class="big-flag bad"><span class="dot bad"></span><span><b>No option fits inside your limits for the simulation.</b> Loosen them below, for example allow more students per grade or let another grade change.</span></div>'; $('sim-body').hidden = true; return; }
     if (s.failed) { $('sim-status').innerHTML = '<div class="big-flag bad"><span class="dot bad"></span><span><b>No simulation can meet the limits with these rules.</b> ' + (c.basis === 'phases' ? 'With only phase totals counted, the limit may allow no Weak results at all. Try counting grades and totals together.' : 'Check the limits and which judgements count.') + '</span></div>'; $('sim-body').hidden = true; return; }
     $('sim-body').hidden = false;
     var o = s.options[st.sel];
     $('sim-status').innerHTML = '<div class="kpis"><div class="kpi sim"><span class="l">Judgements that change</span><span class="v">' + o.changed.length + '</span><span class="s">The fewest possible</span></div><div class="kpi sim"><span class="l">Students</span><span class="v">' + o.students + '</span><span class="s">' + pc(o.share) + ' of assessed students</span></div><div class="kpi ' + (o.substantial ? 'bad' : '') + '"><span class="l">Largest change in one grade</span><span class="v">' + o.maxPts.toFixed(1) + '</span><span class="s">percentage points' + (o.substantial ? ', substantial' : '') + '</span></div></div>';
     $('opts').innerHTML = s.options.map(function (x, i) { return '<button type="button" aria-pressed="' + (i === st.sel) + '" data-opt="' + i + '"><span class="o-n">Option ' + String.fromCharCode(65 + i) + '</span><span class="o-s">' + x.students + ' students, ' + x.changed.length + ' changes' + (i === 0 ? ', smallest' : '') + '</span></button>'; }).join('');
-    $('opts-note').textContent = s.options.length > 1 ? 'All options change the fewest judgements possible. They differ in which grades move and how many students that takes.' : '';
+    var notes = [];
+    if (s.pinned) notes.push('Includes your own simulated changes.');
+    if (s.options.length > 1) notes.push('All options change the fewest judgements possible. They differ in which grades move and how many students that takes.');
+    var xf = o.check.extra.filter(function (x) { return !x.ok; });
+    if (xf.length) notes.push('Not met in this option: ' + xf.map(function (x) { return x.label; }).join('; ') + '. The simulation only fixes Weak and Outstanding.');
+    $('opts-note').textContent = notes.join(' ');
     // before / after stacked bars
     function stack(list) {
       var d = E.dist(list), n = d.n || 1;

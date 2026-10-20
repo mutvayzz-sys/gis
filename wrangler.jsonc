@@ -8,8 +8,8 @@
     "directory": "./public",
     "binding": "ASSETS"
   },
-  // The model the assistant uses. The API key is a secret: ANTHROPIC_API_KEY.
-  "vars": { "MODEL": "claude-sonnet-5-5" },
+  // The model and effort the assistant uses. The API key is a secret: ANTHROPIC_API_KEY.
+  "vars": { "MODEL": "claude-sonnet-5-5", "EFFORT": "medium" },
   // Keep variables added in the Cloudflare dashboard when deploying (secrets are always kept).
   "keep_vars": true,
   // Per-visitor limits: assistant messages, and reports that open GitHub issues.

@@ -4,7 +4,7 @@
 // hits something it cannot do; it carries a short summary only, never sheet data.
 import PROMPT from '../src/prompt.txt';
 
-const TOOLS = new Set(['get_overview', 'read_cells', 'choose_sheet', 'set_header_row', 'set_column', 'set_rules', 'edit_number', 'set_cell', 'choose_option', 'go_to_step', 'set_cells', 'enter_rows', 'set_phase', 'add_rule', 'remove_rule', 'set_simulation_limits', 'set_simulated_numbers', 'report_gap']);
+const TOOLS = new Set(['get_overview', 'read_cells', 'choose_sheet', 'set_header_row', 'set_column', 'set_rules', 'edit_number', 'set_cell', 'choose_option', 'go_to_step', 'set_cells', 'enter_rows', 'set_phase', 'add_rule', 'remove_rule', 'set_simulation_limits', 'set_simulated_numbers', 'report_gap', 'undo_last_change']);
 const MAX_BODY = 4 * 1024 * 1024; // room for a few attached pictures
 const REPORT_REPO = 'mutvayzz-sys/gis';
 
@@ -91,7 +91,7 @@ export default {
       const res = await fetch(env.ANTHROPIC_URL || 'https://api.anthropic.com/v1/messages', {
         method: 'POST',
         headers: { 'x-api-key': env.ANTHROPIC_API_KEY, 'anthropic-version': '2023-06-01', 'content-type': 'application/json' },
-        body: JSON.stringify({ model: env.MODEL || 'claude-sonnet-5-5', max_tokens: 2048, system: PROMPT, messages, tools })
+        body: JSON.stringify({ model: env.MODEL || 'claude-sonnet-5-5', max_tokens: 16000, output_config: { effort: env.EFFORT || 'medium' }, system: PROMPT, messages, tools })
       });
       let data = {};
       try { data = await res.json(); } catch { /* fall through */ }

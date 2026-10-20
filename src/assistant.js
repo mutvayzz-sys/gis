@@ -168,12 +168,15 @@
         return fetch('/api/report', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ asked: String(i.asked || '').slice(0, 400), why: String(i.why || '').slice(0, 600), kind: i.kind || 'missing feature', step: 'step ' + st.step }) })
           .then(function (r) { return r.json().catch(function () { return {}; }).then(function (j) { if (!r.ok) throw new Error(j.error || 'Could not send the report'); AS.reported = (AS.reported || 0) + 1; bubble('note', 'Passed on to the site owner.'); return 'Reported to the site owner' + (j.number ? ' (#' + j.number + ')' : '') + '.'; }); });
       } },
+    { name: 'undo_last_change', description: 'Undoes the most recent change in the change list (yours or the one before it), exactly as the Undo button does. Use it to back out a change that did not work, instead of changing things back by hand.',
+      inputSchema: { type: 'object', properties: {} },
+      execute: function () { var l = undoLast(true); if (!l) throw new Error('Nothing to undo'); return 'Undone: ' + l + '. ' + (AS.log[0] ? 'Latest change now: ' + AS.log[0].label : 'No changes left.'); } },
     { name: 'go_to_step', description: 'Shows a step of the page so the person can see the result: 1 Load, 2 Check, 3 Rules (including extra rules), 4 Results, 5 Simulation (including its limits), 6 Download.', inputSchema: { type: 'object', properties: { step: { type: 'integer' } }, required: ['step'] },
       execute: function (i) { go(+i.step); if (+i.step === 5) { var d = $('simlim'); if (d && (st.cfg.simMaxStudents != null || st.cfg.simMaxPts != null || (st.cfg.simLocked || []).length || Object.keys(st.cfg.simPinned || {}).length)) d.open = true; } return 'Showing step ' + st.step; } }
   ];
 
   /* ---------- transports ---------- */
-  var PRIORITY = ['get_overview', 'read_cells', 'set_column', 'set_header_row', 'set_cells', 'enter_rows', 'set_rules', 'add_rule', 'set_simulation_limits', 'set_simulated_numbers', 'choose_option', 'go_to_step', 'edit_number', 'set_phase', 'remove_rule', 'choose_sheet', 'set_cell'];
+  var PRIORITY = ['get_overview', 'read_cells', 'set_column', 'set_header_row', 'set_cells', 'enter_rows', 'set_rules', 'add_rule', 'set_simulation_limits', 'set_simulated_numbers', 'choose_option', 'go_to_step', 'undo_last_change', 'edit_number', 'set_phase', 'remove_rule', 'choose_sheet', 'set_cell'];
   function detect() {
     if (window.claude && typeof window.claude.use === 'function') {
       return window.claude.use('sample').then(function (s) {
@@ -199,6 +202,7 @@
     if (noTools) turns[0].content += '\n\nIN THIS VIEW YOU HAVE NO TOOLS: you can explain and advise, but you cannot change anything on the page. If they ask for a change, tell them exactly where on the page to make it (step and field).';
     var opts = noTools ? { cache: false, signal: AS.ctl.signal, onText: function (u) { onText(u.text); } } : { tools: pageTools(), cache: false, signal: AS.ctl.signal, onText: function (u) { onText(u.text); } };
     if (images && images.length && AS.imgMax) opts.images = images.slice(0, AS.imgMax);
+    opts.model = 'claude-sonnet-5-5'; opts.effort = 'medium'; opts.modelTier = 'default';
     return AS.sample(turns, opts)
       .then(function (r) { return r.text; });
   }
@@ -246,8 +250,22 @@
   fab.addEventListener('click', function () { openPanel(!isOpen()); });
   $('asst-close').addEventListener('click', function () { openPanel(false); });
   document.addEventListener('keydown', function (e) { if (e.key === 'Escape' && isOpen()) openPanel(false); });
+  // Small, safe Markdown: **bold**, bullet lists, paragraphs. Everything is escaped first.
+  function md(text) {
+    var lines = esc(String(text || '')).split('\n'), html = '', list = 0;
+    function inline(t) { return t.replace(/\*\*([^*]+)\*\*/g, '<b>$1</b>').replace(/`([^`]+)`/g, '<code>$1</code>'); }
+    lines.forEach(function (l) {
+      var m = /^(\s*)[-*] (.*)$/.exec(l), lvl = m ? (m[1].length >= 2 ? 2 : 1) : 0;
+      while (list > lvl) { html += '</ul>'; list--; }
+      while (list < lvl) { html += '<ul>'; list++; }
+      if (m) html += '<li>' + inline(m[2]) + '</li>';
+      else if (l.trim()) html += '<p>' + inline(l) + '</p>';
+    });
+    while (list-- > 0) html += '</ul>';
+    return html;
+  }
   function bubble(role, text, cls) { var d = document.createElement('div'); d.className = 'bub ' + role + (cls ? ' ' + cls : ''); d.textContent = text; log.appendChild(d); $('asst-hello').hidden = true; var bd = $('asst-body'); bd.scrollTop = bd.scrollHeight; return d; }
-  var NICE = { get_overview: 'Looking at the page', read_cells: 'Reading cells', choose_sheet: 'Switching sheet', set_header_row: 'Setting the heading row', set_column: 'Matching a column', set_rules: 'Changing rules', edit_number: 'Correcting a number', set_cell: 'Fixing a cell', set_cells: 'Fixing cells', enter_rows: 'Typing the rows in', set_phase: 'Setting phases', add_rule: 'Adding a rule', remove_rule: 'Removing a rule', set_simulation_limits: 'Setting simulation limits', set_simulated_numbers: 'Changing the simulation', report_gap: 'Passing it on', choose_option: 'Choosing an option', go_to_step: 'Opening a step' };
+  var NICE = { get_overview: 'Looking at the page', read_cells: 'Reading cells', choose_sheet: 'Switching sheet', set_header_row: 'Setting the heading row', set_column: 'Matching a column', set_rules: 'Changing rules', edit_number: 'Correcting a number', set_cell: 'Fixing a cell', set_cells: 'Fixing cells', enter_rows: 'Typing the rows in', set_phase: 'Setting phases', add_rule: 'Adding a rule', remove_rule: 'Removing a rule', set_simulation_limits: 'Setting simulation limits', set_simulated_numbers: 'Changing the simulation', report_gap: 'Passing it on', undo_last_change: 'Undoing a change', choose_option: 'Choosing an option', go_to_step: 'Opening a step' };
   var actEl = null;
   function activity(name) { if (actEl) actEl.textContent = (NICE[name] || name) + '…'; }
   function renderSugg() {
@@ -268,18 +286,22 @@
     if (banner) { banner.hidden = !AS.log.length; $('asst-banner-t').textContent = AS.log.length ? 'The assistant made ' + AS.log.length + ' change' + (AS.log.length === 1 ? '' : 's') + '. Latest: ' + AS.log[0].label + '.' : ''; }
     if (!isOpen() && AS.log.length) { unseen++; badge(); }
   }
-  document.addEventListener('click', function (e) {
-    var u = e.target.closest && e.target.closest('[data-undo]'); if (!u) return;
-    var x = AS.log[0]; if (!x) return;
+  function undoLast(quiet) {
+    var x = AS.log[0]; if (!x) return null;
     if (x.extra && x.extra.cell) { var ws = st.src.getWorksheet(x.extra.sheet); if (ws) ws.getCell(x.extra.cell).value = x.extra.prev; }
     if (x.extra && x.extra.cells) { var ws2 = st.src.getWorksheet(x.extra.sheet); if (ws2) x.extra.cells.slice().reverse().forEach(function (p) { ws2.getCell(p.cell).value = p.prev; }); }
     AS.log.shift();
     if (x.extra && x.extra.source) {
       var ps = x.extra.source; ROWS.kind = ps.rows.kind; ROWS.title = ps.rows.title; ROWS.list = ps.rows.list; if (!$('rows-card').hidden) renderRows();
       st.src = ps.src; st.origWb = ps.origWb; st.srcName = ps.srcName; st.sheetName = ps.sheetName; st.grid = ps.grid;
-      if (!st.src) { st.parsed = null; st.base = null; st.sim = null; st.cfg = x.before.cfg; st.edits = {}; renderLog(); go(1); bubble('note', 'Undone: ' + x.label + '.'); return; }
+      if (!st.src) { st.parsed = null; st.base = null; st.sim = null; st.cfg = x.before.cfg; st.edits = {}; renderLog(); go(1); if (!quiet) bubble('note', 'Undone: ' + x.label + '.'); return x.label; }
     }
-    restore(x.before); renderLog(); bubble('note', 'Undone: ' + x.label + '.');
+    restore(x.before); renderLog(); if (!quiet) bubble('note', 'Undone: ' + x.label + '.');
+    return x.label;
+  }
+  document.addEventListener('click', function (e) {
+    var u = e.target.closest && e.target.closest('[data-undo]'); if (!u) return;
+    undoLast(false);
   });
   $('asst-banner-open') && $('asst-banner-open').addEventListener('click', function () { openPanel(true); $('asst-changes').open = true; });
   /* ---------- attachments: read in the browser, never uploaded anywhere but Claude ---------- */
@@ -488,7 +510,7 @@
       return Promise.all(prep.blobs.map(blobB64)).then(function (b64) { return runApi(prep.text, function (t) { out.textContent = t; out.appendChild(actEl); }, b64); });
     });
     p.then(function (final) {
-      out.textContent = final || 'Done.'; AS.turns.push({ role: 'user', content: histText }, { role: 'assistant', content: final || 'Done.' });
+      out.innerHTML = md(final || 'Done.'); out.classList.add('md'); AS.turns.push({ role: 'user', content: histText }, { role: 'assistant', content: final || 'Done.' });
     }, function (e) {
       var c = e && e.code;
       if (c === 'cancelled' || (e && e.name === 'AbortError')) out.textContent = (e.text || out.textContent.replace(/\S*…$/, '')) + ' (stopped)';

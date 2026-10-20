@@ -7,5 +7,8 @@
     "dev": "node scripts/build.js && npx wrangler dev",
     "deploy": "node scripts/build.js && npx wrangler deploy",
     "deploy:ci": "npx wrangler deploy && node scripts/put-secret.js"
+  },
+  "dependencies": {
+    "@cloudflare/puppeteer": "1.4.0"
   }
 }

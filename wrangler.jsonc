@@ -4,6 +4,9 @@
   "name": "gis",
   "main": "worker/index.js",
   "compatibility_date": "2026-06-01",
+  "compatibility_flags": ["nodejs_compat"],
+  // Cloudflare Browser Run: turns the report page into a PDF (free plan: 10 browser minutes a day).
+  "browser": { "binding": "BROWSER" },
   "assets": {
     "directory": "./public",
     "binding": "ASSETS"
@@ -15,7 +18,8 @@
   // Per-visitor limits: assistant messages, and reports that open GitHub issues.
   "ratelimits": [
     { "name": "CHAT_LIMIT", "namespace_id": "4101", "simple": { "limit": 30, "period": 60 } },
-    { "name": "REPORT_LIMIT", "namespace_id": "4102", "simple": { "limit": 3, "period": 60 } }
+    { "name": "REPORT_LIMIT", "namespace_id": "4102", "simple": { "limit": 3, "period": 60 } },
+    { "name": "PDF_LIMIT", "namespace_id": "4103", "simple": { "limit": 5, "period": 60 } }
   ],
   // Attaches the Worker to gis.gcaplabs.com and creates the DNS record for it.
   "routes": [

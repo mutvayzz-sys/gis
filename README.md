@@ -55,4 +55,6 @@ A Google Sheets link (shared as "Anyone with the link") can be pasted on the fir
 
 ## Downloads
 
-Step 6 offers the Excel workbook (every sheet with live formulas, a plain-language Summary sheet first, and an Assistant notes sheet when the assistant was used), a PDF report of the same summary, and the assistant conversation as a Markdown file. The assistant can put the same download buttons under its replies. All files are built in the browser.
+Step 6 offers the Excel workbook (every sheet with live formulas, a plain-language Summary sheet first, and an Assistant notes sheet when the assistant was used), a designed PDF report, and the assistant conversation as a Markdown file.
+
+The PDF report (src/report.js) is built in the browser as one HTML document: cover with key findings, criteria, the sheet as received, corrections, the corrected sheet, tiles and bar charts, judgement counts, one landscape page per simulated option, and notes. On the site, `/api/pdf` prints it with Cloudflare Browser Run (binding `BROWSER`; the free plan allows 10 browser minutes a day), with JavaScript off and only Google Fonts allowed to load. Nothing is stored. Where that is not available (the Claude artifact), the browser's print dialog saves it as PDF. The assistant can put the same download buttons under its replies. All files are built in the browser.

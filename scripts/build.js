@@ -10,7 +10,7 @@ const fill = {
   ENGINE: strip(rd('engine.js'), 'Engine'),
   BOOK: strip(rd('book.js'), 'Book'),
   GRID: strip(rd('grid.js'), 'Grid'),
-  APP: rd('app.js').replace('/*ASSISTANT*/', rd('assistant.js'))
+  APP: rd('app.js').replace('/*ASSISTANT*/', () => rd('assistant.js')).replace('/*REPORT*/', () => rd('report.js'))
 };
 const page = rd('page.html').replace(/\{\{([A-Z]+)\}\}/g, (m, k) => {
   if (fill[k] == null) throw new Error('No value for placeholder ' + k);

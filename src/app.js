@@ -215,7 +215,15 @@
     if (st.base) st.wb = Book.build({ srcWb: st.src, origWb: st.origWb, sheetName: st.sheetName, parsed: st.parsed, cfg: st.cfg, base: st.base, sim: st.sim, sel: st.sel, summary: summaryOf(), notes: notesOf() });
     return st.wb;
   }
-  function subjectName() { return (st.parsed && st.parsed.blocks[0] && st.parsed.blocks[0].title) || 'Progress'; }
+  function subjectName() {
+    var b = st.parsed && st.parsed.blocks; if (!b || !b.length) return 'Progress';
+    if (b.length === 1) return b[0].title || st.sheetName || 'Progress';
+    // Several tables: name them by what their titles share, or by the sheet.
+    var t = b.map(function (x) { return String(x.title || ''); }), pre = t[0];
+    t.forEach(function (x) { while (pre && x.indexOf(pre) !== 0) pre = pre.slice(0, -1); });
+    pre = pre.replace(/[\s:,\-–]+$/, '').trim();
+    return pre.length >= 4 ? pre : (st.sheetName || 'Progress');
+  }
   function fileBase() { return subjectName().replace(/[\\/:*?"<>|]/g, '-'); }
   // One plain-language account of the results, used by the PDF report and the workbook's Summary sheet.
   function summaryOf() {
@@ -410,6 +418,30 @@
 
   /* ---------- shared visuals ---------- */
   function short(it) { return it.kind === 'total' ? 'P' + it.phase + ' total' : String(it.grade).replace(/^grade\s*/i, 'G'); }
+  function barsBlock(m, c) {
+    var h = '<div class="bars">';
+    m.units.forEach(function (u) {
+      if (m.units.length > 1) h += '<div class="muted small" style="margin-top:6px"><b>' + esc((st.parsed.blocks.length > 1 ? u.block + ', ' : '') + (u.group !== 'All students' ? u.group + ', ' : '') + 'Phase ' + u.phase) + '</b></div>';
+      u.grades.forEach(function (g) {
+        h += '<div class="bar-row"><span class="nm">' + esc(g.grade) + '</span><span class="bar-track"><span class="bar-fill k-' + (KEY[g.judg] || 'acc') + '" style="width:' + Math.max(0, Math.min(100, (g.I || 0) * 100)) + '%"></span><span class="bar-line" style="left:' + c.acc * 100 + '%"></span></span><span class="bar-val">' + pc(g.I) + ' ' + dot(g.judg) + '</span></div>';
+      });
+    });
+    h += '</div><div class="bar-axis"><i></i><div><span style="left:0">0%</span><span style="left:' + c.acc * 100 + '%">' + Math.round(c.acc * 100) + '%</span><span style="left:100%">100%</span></div><i></i></div>';
+    return h;
+  }
+  function phaseCards(m, c) {
+    return m.units.filter(function (u) { return u.total; }).map(function (u) {
+      var t = u.total, title = (st.parsed.blocks.length > 1 ? u.block + ', ' : '') + (u.group !== 'All students' && m.units.length > 1 ? u.group + ', ' : '') + 'Phase ' + u.phase;
+      var body;
+      if (c.totalMethod === 'points') {
+        body = '<div class="pts-row">' + u.grades.map(function (g) { return '<span class="chip" title="' + esc(g.grade + ': ' + g.judg) + '">' + dot(g.judg) + esc(short(g)) + ' ' + (g.pts == null ? '–' : g.pts) + '</span>'; }).join('') + '</div>' +
+          '<div class="calc"><span>' + t.sumPts + ' ÷ ' + t.nPts + ' =</span><b>' + (t.avg == null ? '–' : t.avg.toFixed(2)) + '</b><span class="arrow">→</span><span>' + (t.rounded == null ? '' : t.rounded) + '</span><span class="arrow">→</span>' + tag(t.judg) + '</div>' +
+          (t.roundingFlag ? '<div class="flag"><span class="dot warn"></span><span><strong>Confirm rounding.</strong> No rule given for decimals, so the nearest point is used for now.</span></div>' : '');
+      } else body = '<div class="calc"><span>' + t.G + ' of ' + t.A + ' assessed</span><span class="arrow">→</span><b>' + pc(t.I) + '</b><span class="arrow">→</span>' + tag(t.judg) + '</div>';
+      body += '<p class="muted small">Together: ' + t.G + ' of ' + t.A + ' assessed students made expected or better progress (' + pc(t.I) + '), ' + t.H + ' did better than expected (' + pc(t.J) + ').</p>';
+      return '<div class="pc"><b>' + esc(title) + ' total</b>' + body + '</div>';
+    });
+  }
   function tilesBlock(model, base, c) {
     var levels = [['Grades', 'grades'], ['Phase totals', 'phases']];
     var html = levels.map(function (lv) {
@@ -446,28 +478,8 @@
       k.extra.map(function (x) { return '<div class="kpi ' + (x.ok ? 'ok' : 'bad') + '"><span class="l">' + esc(x.label) + '</span><span class="v">' + x.count + ' of ' + k.n + '</span><span class="s">' + (x.op === 'min' ? 'Needs ' : 'Allowed: ') + x.limit + '. ' + (x.ok ? 'Met.' : 'Not met.') + '</span></div>'; }).join('') +
       '<div class="kpi"><span class="l">Fixed in the sheet</span><span class="v">' + fx.fixes.length + '</span><span class="s">' + (fx.fixes.length ? 'No student numbers changed' : 'Nothing needed fixing') + '</span></div>';
     $('tiles-actual').innerHTML = tilesBlock(m, null, c);
-    // bars
-    var h = '<div class="bars">';
-    m.units.forEach(function (u) {
-      if (m.units.length > 1) h += '<div class="muted small" style="margin-top:6px"><b>' + esc((st.parsed.blocks.length > 1 ? u.block + ', ' : '') + (u.group !== 'All students' ? u.group + ', ' : '') + 'Phase ' + u.phase) + '</b></div>';
-      u.grades.forEach(function (g) {
-        h += '<div class="bar-row"><span class="nm">' + esc(g.grade) + '</span><span class="bar-track"><span class="bar-fill k-' + (KEY[g.judg] || 'acc') + '" style="width:' + Math.max(0, Math.min(100, (g.I || 0) * 100)) + '%"></span><span class="bar-line" style="left:' + c.acc * 100 + '%"></span></span><span class="bar-val">' + pc(g.I) + ' ' + dot(g.judg) + '</span></div>';
-      });
-    });
-    h += '</div><div class="bar-axis"><i></i><div><span style="left:0">0%</span><span style="left:' + c.acc * 100 + '%">' + Math.round(c.acc * 100) + '%</span><span style="left:100%">100%</span></div><i></i></div>';
-    $('bars').innerHTML = h;
-    // phase cards
-    var cards = m.units.filter(function (u) { return u.total; }).map(function (u) {
-      var t = u.total, title = (st.parsed.blocks.length > 1 ? u.block + ', ' : '') + (u.group !== 'All students' && m.units.length > 1 ? u.group + ', ' : '') + 'Phase ' + u.phase;
-      var body;
-      if (c.totalMethod === 'points') {
-        body = '<div class="pts-row">' + u.grades.map(function (g) { return '<span class="chip" title="' + esc(g.grade + ': ' + g.judg) + '">' + dot(g.judg) + esc(short(g)) + ' ' + (g.pts == null ? '–' : g.pts) + '</span>'; }).join('') + '</div>' +
-          '<div class="calc"><span>' + t.sumPts + ' ÷ ' + t.nPts + ' =</span><b>' + (t.avg == null ? '–' : t.avg.toFixed(2)) + '</b><span class="arrow">→</span><span>' + (t.rounded == null ? '' : t.rounded) + '</span><span class="arrow">→</span>' + tag(t.judg) + '</div>' +
-          (t.roundingFlag ? '<div class="flag"><span class="dot warn"></span><span><strong>Confirm rounding.</strong> No rule given for decimals, so the nearest point is used for now.</span></div>' : '');
-      } else body = '<div class="calc"><span>' + t.G + ' of ' + t.A + ' assessed</span><span class="arrow">→</span><b>' + pc(t.I) + '</b><span class="arrow">→</span>' + tag(t.judg) + '</div>';
-      body += '<p class="muted small">Together: ' + t.G + ' of ' + t.A + ' assessed students made expected or better progress (' + pc(t.I) + '), ' + t.H + ' did better than expected (' + pc(t.J) + ').</p>';
-      return '<div class="pc"><b>' + esc(title) + ' total</b>' + body + '</div>';
-    });
+    $('bars').innerHTML = barsBlock(m, c);
+    var cards = phaseCards(m, c);
     $('phase-card').hidden = !cards.length; $('phasecards').innerHTML = cards.join('');
     $('fix-card').hidden = !fx.fixes.length;
     $('fix-h').textContent = 'Fixed in the sheet (' + fx.fixes.length + ')';
@@ -572,6 +584,7 @@
     $('dl-chat').hidden = !hasChat;
   }
 
+/*REPORT*/
   /* ---------- downloads ---------- */
   var dlP = null;
   var MIME = { xlsx: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet', pdf: 'application/pdf', md: 'text/markdown', txt: 'text/plain' };
@@ -637,7 +650,7 @@
     if (kind === 'template') { if (typeof ExcelJS === 'undefined') { msg('msg1', 'The Excel writer did not load. Reload the page and try again.', 'bad'); return; } return saveFile('Progress Judgements - Blank Template.xlsx', Book.template().xlsx.writeBuffer(), 'msg1'); }
     if (!st.base) { msg(out, 'Load a sheet first.', 'bad'); return; }
     if (kind === 'workbook') { if (typeof ExcelJS === 'undefined') { msg(out, 'The Excel writer did not load. Reload the page and try again.', 'bad'); return; } var wb; try { wb = workbook(); } catch (err) { msg(out, 'The workbook could not be built (' + err.message + ').', 'bad'); return; } return saveFile(fileBase() + ' - Actual and Simulated Results.xlsx', wb.xlsx.writeBuffer().then(function (b) { return new Uint8Array(b); }), out); }
-    if (kind === 'report') return saveFile(fileBase() + ' - Report.pdf', reportPdf().then(function (b) { return new Uint8Array(b); }), out);
+    if (kind === 'report') return reportDownload(out);
     if (kind === 'chat') return saveFile(fileBase() + ' - Assistant conversation.md', Promise.resolve(chatText()), out);
   }
   document.addEventListener('click', function (e) {

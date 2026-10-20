@@ -3,6 +3,7 @@
 // Nothing about a sheet is stored. /api/report opens a GitHub issue when the assistant
 // hits something it cannot do; it carries a short summary only, never sheet data.
 import PROMPT from '../src/prompt.txt';
+import puppeteer from '@cloudflare/puppeteer';
 
 const TOOLS = new Set(['get_overview', 'read_cells', 'choose_sheet', 'set_header_row', 'set_column', 'set_rules', 'edit_number', 'set_cell', 'choose_option', 'go_to_step', 'set_cells', 'enter_rows', 'set_phase', 'add_rule', 'remove_rule', 'set_simulation_limits', 'set_simulated_numbers', 'report_gap', 'undo_last_change', 'offer_downloads']);
 const MAX_BODY = 4 * 1024 * 1024; // room for a few attached pictures
@@ -29,7 +30,7 @@ export default {
   async fetch(request, env) {
     const url = new URL(request.url);
 
-    if (url.pathname === '/api/health') return json({ ok: Boolean(env.ANTHROPIC_API_KEY), reports: Boolean(env.GIS_GITHUB_TOKEN) });
+    if (url.pathname === '/api/health') return json({ ok: Boolean(env.ANTHROPIC_API_KEY), reports: Boolean(env.GIS_GITHUB_TOKEN), pdf: Boolean(env.BROWSER) });
 
     if (url.pathname === '/api/report') {
       if (request.method !== 'POST') return json({ error: 'Use POST.' }, 405);
@@ -56,6 +57,35 @@ export default {
       if (!res.ok) return json({ error: 'The report could not be sent (' + res.status + ').' }, 502);
       const issue = await res.json().catch(() => ({}));
       return json({ ok: true, number: issue.number || null });
+    }
+
+    if (url.pathname === '/api/pdf') {
+      // Prints the report page (built in the visitor's browser) to PDF with Cloudflare Browser Run. Nothing is stored.
+      if (request.method !== 'POST') return json({ error: 'Use POST.' }, 405);
+      if (!sameSite(request, url)) return json({ error: 'Requests are only accepted from this site.' }, 403);
+      if (!env.BROWSER) return json({ error: 'PDF printing is not set up.' }, 503);
+      if (Number(request.headers.get('content-length') || 0) > 8 * 1024 * 1024) return json({ error: 'That report is too large.' }, 413);
+      if (!(await allowed(env.PDF_LIMIT, request.headers.get('cf-connecting-ip') || 'unknown'))) return json({ error: 'Too many reports right now. Wait a minute and try again.' }, 429);
+      const html = await request.text();
+      if (!/^<!doctype html>/i.test(html.trim())) return json({ error: 'Not a report.' }, 400);
+      let browser;
+      try {
+        browser = await puppeteer.launch(env.BROWSER);
+        const page = await browser.newPage();
+        await page.setJavaScriptEnabled(false);
+        await page.setRequestInterception(true);
+        page.on('request', (r) => {
+          const u = r.url();
+          if (u.startsWith('data:') || u.startsWith('about:') || /^https:\/\/fonts\.(googleapis|gstatic)\.com\//.test(u)) r.continue(); else r.abort();
+        });
+        await page.setContent(html, { waitUntil: 'networkidle0', timeout: 25000 });
+        const pdf = await page.pdf({ preferCSSPageSize: true, printBackground: true });
+        return new Response(pdf, { headers: { 'content-type': 'application/pdf', 'cache-control': 'no-store' } });
+      } catch (e) {
+        return json({ error: 'The PDF could not be made right now.' }, 502);
+      } finally {
+        if (browser) { try { await browser.close(); } catch { /* already closed */ } }
+      }
     }
 
     if (url.pathname === '/api/gsheet') {

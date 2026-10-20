@@ -161,6 +161,13 @@
         record('Simulated ' + g.grade + ': ' + (p.G != null ? 'expected ' + g.G + ' → ' + p.G : '') + (p.H != null ? (p.G != null ? ', ' : '') + 'better ' + g.H + ' → ' + p.H : ''), b);
         return overview().simulation;
       } },
+    { name: 'report_gap', description: 'Tells the site owner about something you could not do: a change the tools cannot make, a missing feature, or a sheet layout you could not read. Call it once per gap, after telling the person you cannot do it. Write a short general summary. Never include student numbers, names, cell values or anything copied from the sheet.',
+      inputSchema: { type: 'object', properties: { asked: { type: 'string', description: 'What the person wanted, in one or two general sentences.' }, why: { type: 'string', description: 'Why the tools could not do it, and what would be needed.' }, kind: { type: 'string', enum: ['missing feature', 'layout not readable', 'bug', 'other'] } }, required: ['asked', 'why'] },
+      execute: function (i) {
+        if (AS.reported >= 3) return 'Already reported several things in this visit; not sending more.';
+        return fetch('/api/report', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ asked: String(i.asked || '').slice(0, 400), why: String(i.why || '').slice(0, 600), kind: i.kind || 'missing feature', step: 'step ' + st.step }) })
+          .then(function (r) { return r.json().catch(function () { return {}; }).then(function (j) { if (!r.ok) throw new Error(j.error || 'Could not send the report'); AS.reported = (AS.reported || 0) + 1; bubble('note', 'Passed on to the site owner.'); return 'Reported to the site owner' + (j.number ? ' (#' + j.number + ')' : '') + '.'; }); });
+      } },
     { name: 'go_to_step', description: 'Shows a step of the page so the person can see the result: 1 Load, 2 Check, 3 Rules (including extra rules), 4 Results, 5 Simulation (including its limits), 6 Download.', inputSchema: { type: 'object', properties: { step: { type: 'integer' } }, required: ['step'] },
       execute: function (i) { go(+i.step); if (+i.step === 5) { var d = $('simlim'); if (d && (st.cfg.simMaxStudents != null || st.cfg.simMaxPts != null || (st.cfg.simLocked || []).length || Object.keys(st.cfg.simPinned || {}).length)) d.open = true; } return 'Showing step ' + st.step; } }
   ];
@@ -178,11 +185,11 @@
         });
       }).catch(function () { return null; });
     }
-    return fetch('/api/health', { method: 'GET' }).then(function (r) { return r.ok ? r.json() : null; }).then(function (j) { return j && j.ok ? 'api' : null; }).catch(function () { return null; });
+    return fetch('/api/health', { method: 'GET' }).then(function (r) { return r.ok ? r.json() : null; }).then(function (j) { AS.canReport = !!(j && j.reports); return j && j.ok ? 'api' : null; }).catch(function () { return null; });
   }
   function pageTools() {
     var max = Math.max(1, AS.maxTools || TOOLS.length);
-    var list = TOOLS.slice().sort(function (a, b) { var x = PRIORITY.indexOf(a.name), y = PRIORITY.indexOf(b.name); return (x < 0 ? 99 : x) - (y < 0 ? 99 : y); }).slice(0, max);
+    var list = TOOLS.filter(function (t) { return t.name !== 'report_gap' || AS.canReport; }).sort(function (a, b) { var x = PRIORITY.indexOf(a.name), y = PRIORITY.indexOf(b.name); return (x < 0 ? 99 : x) - (y < 0 ? 99 : y); }).slice(0, max);
     return list.map(function (t) { return { name: t.name, description: t.description, inputSchema: t.inputSchema, execute: function (inp) { activity(t.name, inp); return t.execute(inp || {}); } }; });
   }
   function runClaude(userText, onText) {
@@ -195,7 +202,7 @@
   function runApi(userText, onText) {
     var msgs = AS.turns.slice(-12).map(function (t) { return { role: t.role, content: t.content }; });
     msgs.push({ role: 'user', content: 'CURRENT STATE (JSON):\n' + JSON.stringify(overview()).slice(0, 60000) + '\n\nREQUEST:\n' + userText });
-    var tools = TOOLS.map(function (t) { return { name: t.name, description: t.description, input_schema: t.inputSchema }; });
+    var tools = TOOLS.filter(function (t) { return t.name !== 'report_gap' || AS.canReport; }).map(function (t) { return { name: t.name, description: t.description, input_schema: t.inputSchema }; });
     var said = '';
     function round(n) {
       if (n > 12) return Promise.resolve(said || 'I stopped after several steps. Check the changes listed below.');
@@ -207,13 +214,15 @@
           msgs.push({ role: 'assistant', content: blocks });
           var uses = blocks.filter(function (b) { return b.type === 'tool_use'; });
           if (res.stop_reason !== 'tool_use' || !uses.length) return said;
-          var results = uses.map(function (u) {
-            var t = TOOLS.filter(function (x) { return x.name === u.name; })[0], out, err = false;
-            try { if (!t) throw new Error('Unknown tool'); activity(u.name, u.input); out = t.execute(u.input || {}); } catch (e) { out = 'Error: ' + (e && e.message || e); err = true; }
-            return { type: 'tool_result', tool_use_id: u.id, content: typeof out === 'string' ? out : JSON.stringify(out).slice(0, 30000), is_error: err };
+          return Promise.all(uses.map(function (u) {
+            var t = TOOLS.filter(function (x) { return x.name === u.name; })[0];
+            function wrap(out, err) { return { type: 'tool_result', tool_use_id: u.id, content: typeof out === 'string' ? out : JSON.stringify(out === undefined ? 'Done' : out).slice(0, 30000), is_error: err }; }
+            return Promise.resolve().then(function () { if (!t) throw new Error('Unknown tool'); activity(u.name, u.input); return t.execute(u.input || {}); })
+              .then(function (out) { return wrap(out, false); }, function (e) { return wrap('Error: ' + (e && e.message || e), true); });
+          })).then(function (results) {
+            msgs.push({ role: 'user', content: results });
+            return round(n + 1);
           });
-          msgs.push({ role: 'user', content: results });
-          return round(n + 1);
         });
     }
     return round(1);
@@ -233,7 +242,7 @@
   $('asst-close').addEventListener('click', function () { openPanel(false); });
   document.addEventListener('keydown', function (e) { if (e.key === 'Escape' && isOpen()) openPanel(false); });
   function bubble(role, text, cls) { var d = document.createElement('div'); d.className = 'bub ' + role + (cls ? ' ' + cls : ''); d.textContent = text; log.appendChild(d); $('asst-hello').hidden = true; var bd = $('asst-body'); bd.scrollTop = bd.scrollHeight; return d; }
-  var NICE = { get_overview: 'Looking at the page', read_cells: 'Reading cells', choose_sheet: 'Switching sheet', set_header_row: 'Setting the heading row', set_column: 'Matching a column', set_rules: 'Changing rules', edit_number: 'Correcting a number', set_cell: 'Fixing a cell', set_cells: 'Fixing cells', enter_rows: 'Typing the rows in', set_phase: 'Setting phases', add_rule: 'Adding a rule', remove_rule: 'Removing a rule', set_simulation_limits: 'Setting simulation limits', set_simulated_numbers: 'Changing the simulation', choose_option: 'Choosing an option', go_to_step: 'Opening a step' };
+  var NICE = { get_overview: 'Looking at the page', read_cells: 'Reading cells', choose_sheet: 'Switching sheet', set_header_row: 'Setting the heading row', set_column: 'Matching a column', set_rules: 'Changing rules', edit_number: 'Correcting a number', set_cell: 'Fixing a cell', set_cells: 'Fixing cells', enter_rows: 'Typing the rows in', set_phase: 'Setting phases', add_rule: 'Adding a rule', remove_rule: 'Removing a rule', set_simulation_limits: 'Setting simulation limits', set_simulated_numbers: 'Changing the simulation', report_gap: 'Passing it on', choose_option: 'Choosing an option', go_to_step: 'Opening a step' };
   var actEl = null;
   function activity(name) { if (actEl) actEl.textContent = (NICE[name] || name) + '…'; }
   function renderSugg() {

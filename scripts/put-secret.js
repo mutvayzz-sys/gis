@@ -1,9 +1,14 @@
-// Runs after `wrangler deploy` in Cloudflare's build. If the build has an
-// ANTHROPIC_API_KEY secret, it is copied into the Worker as a runtime secret.
-// The key is passed on stdin, never printed, and never stored in the repo.
+// Runs after `wrangler deploy` in Cloudflare's build. Any of these found in the
+// build's secrets are copied into the Worker as runtime secrets. Values go in on
+// stdin, are never printed, and are never stored in the repo.
 const { spawnSync } = require('child_process');
-const key = (process.env.ANTHROPIC_API_KEY || '').trim();
-if (!key) { console.log('put-secret: no ANTHROPIC_API_KEY in the build settings, skipping.'); process.exit(0); }
-const r = spawnSync('npx', ['wrangler', 'secret', 'put', 'ANTHROPIC_API_KEY'], { input: key + '\n', stdio: ['pipe', 'inherit', 'inherit'] });
-if (r.status !== 0) { console.error('put-secret: could not set the runtime secret (exit ' + r.status + ').'); process.exit(r.status || 1); }
-console.log('put-secret: runtime secret ANTHROPIC_API_KEY updated.');
+const NAMES = ['ANTHROPIC_API_KEY', 'GIS_GITHUB_TOKEN'];
+let failed = 0;
+for (const name of NAMES) {
+  const value = (process.env[name] || '').trim();
+  if (!value) { console.log('put-secret: ' + name + ' not in the build settings, skipping.'); continue; }
+  const r = spawnSync('npx', ['wrangler', 'secret', 'put', name], { input: value + '\n', stdio: ['pipe', 'inherit', 'inherit'] });
+  if (r.status !== 0) { console.error('put-secret: could not set ' + name + ' (exit ' + r.status + ').'); failed = r.status || 1; }
+  else console.log('put-secret: runtime secret ' + name + ' updated.');
+}
+process.exit(failed);

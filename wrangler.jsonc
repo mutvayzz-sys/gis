@@ -12,6 +12,11 @@
   "vars": { "MODEL": "claude-sonnet-5-5" },
   // Keep variables added in the Cloudflare dashboard when deploying (secrets are always kept).
   "keep_vars": true,
+  // Per-visitor limits: assistant messages, and reports that open GitHub issues.
+  "ratelimits": [
+    { "name": "CHAT_LIMIT", "namespace_id": "4101", "simple": { "limit": 30, "period": 60 } },
+    { "name": "REPORT_LIMIT", "namespace_id": "4102", "simple": { "limit": 3, "period": 60 } }
+  ],
   // Attaches the Worker to gis.gcaplabs.com and creates the DNS record for it.
   "routes": [
     { "pattern": "gis.gcaplabs.com", "custom_domain": true }

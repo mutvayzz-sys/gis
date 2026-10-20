@@ -36,3 +36,13 @@ After changing anything in `src/`, run `npm run build` and commit `public/index.
 The model is set by `MODEL` in `wrangler.jsonc`. `/api/chat` only accepts requests from the same site, caps request size and reply length, and only passes on the page's own tools. To limit who can use the assistant (and your API usage), put the site behind Cloudflare Access or add a rate-limiting rule for `/api/chat`.
 
 Student sheets, reports and exports (`.xlsx`, `.csv`, `.pdf`) are blocked by `.gitignore` so they can't be committed by mistake.
+
+## When the assistant can't do something
+
+The assistant calls `/api/report`, which opens a GitHub issue labelled `assistant-gap` on this repo with a short summary (never sheet data). It needs a GitHub token:
+
+1. GitHub → Settings → Developer settings → Fine-grained tokens → new token, repository `mutvayzz-sys/gis` only, permission **Issues: Read and write**.
+2. Cloudflare → the `gis` Worker → Settings → Build → Variables and secrets → add **Secret** `GIS_GITHUB_TOKEN`.
+3. Redeploy. The deploy command (`npm run deploy:ci`) copies build secrets into the Worker.
+
+`/api/health` shows `"reports": true` once it is working. Reports are limited to 3 a minute per visitor, and assistant messages to 30 a minute.

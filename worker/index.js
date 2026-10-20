@@ -13,7 +13,11 @@ export default {
   async fetch(request, env) {
     const url = new URL(request.url);
 
-    if (url.pathname === '/api/health') return json({ ok: Boolean(env.ANTHROPIC_API_KEY) });
+    if (url.pathname === '/api/health') {
+      // Names only (never values), so a missing or misnamed key is easy to spot.
+      const names = Object.keys(env).filter((k) => typeof env[k] === 'string').sort();
+      return json({ ok: Boolean(env.ANTHROPIC_API_KEY), settingsSeen: names, build: '2026-10-21b' });
+    }
 
     if (url.pathname === '/api/chat') {
       if (request.method !== 'POST') return json({ error: 'Use POST.' }, 405);

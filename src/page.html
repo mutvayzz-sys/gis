@@ -333,6 +333,7 @@ table.edit tr.tot td { color: var(--fg-2); font-weight: 600; background: var(--s
 .asst-form { display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: 8px; align-items: end; padding: 10px 12px calc(env(safe-area-inset-bottom, 0px) + 12px); border-top: 1px solid var(--border); }
 .asst-form textarea { min-height: 42px; max-height: 140px; resize: none; font-family: var(--font); font-size: 16px; padding: 10px 12px; }
 .asst-where { grid-column: 1 / -1; font-size: 11px; color: var(--fg-3); }
+.asst-where:empty { display: none; }
 @media (max-width: 560px) {
   .asst { inset: 0; width: 100%; height: 100dvh; border-radius: 0; border: 0; transform-origin: bottom center; transform: translateY(16px); padding-top: env(safe-area-inset-top, 0px); }
   .asst-fab { padding: 0 16px 0 13px; }
@@ -403,7 +404,6 @@ body.asst-open .asst-fab { display: none; }
 <header class="wrap top">
   <h1 id="title">Progress Judgements</h1>
   <p>Load a progress sheet, check it, set the rules, and get a corrected sheet plus a clearly labelled simulation as an Excel workbook.</p>
-  <span class="privacy"><span class="dot ok" aria-hidden="true"></span>Your sheet stays in this browser and nothing is saved. Only if you ask the assistant does it send what it needs to Claude.</span>
 </header>
 
 <nav class="stepper" aria-label="Steps">
@@ -597,7 +597,7 @@ body.asst-open .asst-fab { display: none; }
 
   <!-- STEP 6 -->
   <section class="step" id="step-6" data-step="6" aria-labelledby="h6s" hidden>
-    <div class="step-head"><h2 id="h6s">Download your results</h2><p>An Excel workbook with every number and live formulas, and a PDF report in plain words. Both are made in this browser.</p></div>
+    <div class="step-head"><h2 id="h6s">Download your results</h2><p>An Excel workbook with every number and live formulas, and a PDF report in plain words.</p></div>
     <ul class="wb-list" id="wb-list"></ul>
     <div class="flag" id="dl-flag" hidden><span class="dot warn" aria-hidden="true"></span><span id="dl-flag-t"></span></div>
     <div class="row"><button class="btn primary big" type="button" data-dl="workbook">Download Excel Workbook</button><button class="btn big" type="button" data-dl="report">Download PDF Report</button><button class="btn big quiet" type="button" data-dl="chat" id="dl-chat" hidden>Save Assistant Conversation</button></div>
@@ -619,7 +619,6 @@ body.asst-open .asst-fab { display: none; }
   <form class="asst-form" id="asst-form"><div class="asst-files" id="asst-files" aria-live="polite"></div><div class="asst-inrow"><button type="button" class="asst-attach" id="asst-attach" aria-label="Attach files: spreadsheets, PDF, Word, PowerPoint, text or pictures" title="Attach a spreadsheet, PDF, Word, PowerPoint, text file or picture"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M20 11.5 12.4 19a5 5 0 0 1-7.1-7.1l7.9-7.8a3.3 3.3 0 0 1 4.7 4.7l-7.9 7.8a1.7 1.7 0 0 1-2.4-2.4l7.2-7.1"/></svg></button><input type="file" id="asst-file" class="vh" multiple accept=".xlsx,.xlsm,.xls,.xlsb,.ods,.fods,.csv,.tsv,.numbers,.pdf,.docx,.doc,.odt,.rtf,.pptx,.odp,.txt,.md,.html,.htm,.json,.png,.jpg,.jpeg,.webp,.gif,.heic,.heif,image/*"><label for="asst-in" class="sr">Message</label><textarea id="asst-in" rows="1" placeholder="Ask, or attach a file…" autocomplete="off"></textarea></div><span><button type="button" class="btn" id="asst-stop" hidden>Stop</button><button type="submit" class="btn primary" id="asst-send">Send</button></span><p class="asst-where" id="asst-where"></p></form>
 </section>
 
-<footer class="wrap foot"><p>Everything is calculated in your browser. No sheet data is stored in this page. The assistant sends what it needs to Claude only when you ask it something.</p></footer>
 
 <script src="https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js"></script>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/exceljs/4.4.0/exceljs.min.js"></script>

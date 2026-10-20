@@ -544,12 +544,10 @@
   var UNAVAILABLE = window.claude ? 'The assistant cannot reach Claude in this view. Open this page in Claude on a computer (web or desktop app) and allow it to use Claude when asked. Everything else on the page works here.' : 'The assistant is not switched on for this site yet. Everything else on the page works.';
   AS.mode = undefined;
   fab.hidden = false;
-  $('asst-where').textContent = 'Connecting…';
+  $('asst-where').textContent = '';
   detect().then(function (m) {
     AS.mode = m;
-    $('asst-where').textContent = m === 'claude' ? 'Uses Claude on your own account. What it needs from your sheet is sent only when you ask.'
-      : m === 'claude-text' ? 'In this view the assistant can explain and advise, but cannot change the page. Open it in Claude on a computer to let it make changes.'
-      : m === 'api' ? 'Uses Claude through this site. What it needs from your sheet is sent only when you ask, and is not stored.' : '';
+    $('asst-where').textContent = m === 'claude-text' ? 'In this view the assistant can explain and advise, but cannot change the page. Open it in Claude on a computer to let it make changes.' : '';
     if (!m) { $('asst-hello').innerHTML = '<b>Assistant unavailable here</b>' + esc(UNAVAILABLE); $('asst-sugg').hidden = true; $('asst-in').disabled = true; $('asst-send').disabled = true; }
     renderSugg();
   });

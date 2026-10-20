@@ -426,7 +426,7 @@ body:not(.is-empty) .empty-only { display: none !important; }
       <summary>Paste From Excel</summary>
       <div class="paste-body">
         <label for="paste-box" class="muted small">Copy the table in Excel, header row included, and paste it here. Or paste plain rows in this order: Grade, Phase, Students, Expected or better, Better than expected.</label>
-        <textarea id="paste-box" name="paste" autocomplete="off" spellcheck="false" placeholder="G1	2	75	50	37…"></textarea>
+        <textarea id="paste-box" name="paste" autocomplete="off" spellcheck="false" placeholder="G1	2	80	60	30…"></textarea>
         <div class="toolbar"><button class="btn" type="button" id="use-paste">Use Pasted Data</button></div>
       </div>
     </details>
@@ -1175,7 +1175,7 @@ var Core = (function () {
     if (notes.lab) n.push('Red corner on a grade: it sits under the wrong phase label. The totals show it belongs to the next phase.');
     if (notes.cnt) n.push('Red corner on a total count: the file averaged the grades instead of adding them up.');
     if (notes.pct) n.push('Red corner on a total percentage: it treats every grade as the same size, so it is slightly off.');
-    return { title: title || 'English', head: headRow(), body: body, notes: n, pctDigits: 0, meta: raw.map(function (x) { return { isT: /total/i.test(x.grade) }; }) };
+    return { title: title || 'Your sheet', head: headRow(), body: body, notes: n, pctDigits: 0, meta: raw.map(function (x) { return { isT: /total/i.test(x.grade) }; }) };
   }
   function sheetSpecModel(model, r, base, title) {
     var lookup = {}; if (base) base.items.forEach(function (it) { lookup[it.id] = it; });
@@ -1198,7 +1198,7 @@ var Core = (function () {
       row[0] = spans[i] != null ? { v: phaseKeys[i], t: 'n', fill: XL.pale, rs: spans[i] } : 'skip';
       row[1] = i === 0 ? { v: 'Full Cohort', t: 's', fill: XL.orange, bold: true, size: 16, rot: true, rs: body.length } : 'skip';
     });
-    return { title: title || 'English', head: headRow(), body: body, notes: [], pctDigits: 1, meta: meta };
+    return { title: title || 'Your sheet', head: headRow(), body: body, notes: [], pctDigits: 1, meta: meta };
   }
   function colLetter(i) { return String.fromCharCode(65 + i); }
   function cellVal(c, pd) {

@@ -1,3 +1,11 @@
 node_modules/
 .wrangler/
 .dev.vars
+
+# Never commit student data: sheets, reports or exports
+*.xlsx
+*.xls
+*.csv
+*.tsv
+*.pdf
+data/

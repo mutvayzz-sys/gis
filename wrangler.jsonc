@@ -10,6 +10,8 @@
   },
   // The model the assistant uses. The API key is a secret: ANTHROPIC_API_KEY.
   "vars": { "MODEL": "claude-sonnet-5-5" },
+  // Keep variables added in the Cloudflare dashboard when deploying (secrets are always kept).
+  "keep_vars": true,
   // Attaches the Worker to gis.gcaplabs.com and creates the DNS record for it.
   "routes": [
     { "pattern": "gis.gcaplabs.com", "custom_domain": true }

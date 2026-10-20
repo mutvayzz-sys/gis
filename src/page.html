@@ -298,6 +298,9 @@ table.edit tr.tot td { color: var(--fg-2); font-weight: 600; background: var(--s
 .asst-head { display: flex; justify-content: space-between; align-items: center; gap: 8px; padding: 12px 12px 10px 16px; border-bottom: 1px solid var(--border); }
 .asst-head h2 { font-size: var(--fs-body); font-weight: 650; }
 .asst-head .sub { display: block; font-size: var(--fs-cap); color: var(--fg-2); font-weight: 400; margin-top: 2px; }
+.asst-hbtns { display: flex; gap: 2px; }
+.dl-offer { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 8px; }
+.dl-offer .btn { min-height: 32px; padding: 0 12px; font-size: var(--fs-cap); background: var(--bg); }
 .asst-x { appearance: none; border: 0; background: transparent; color: var(--fg-2); width: 34px; height: 34px; border-radius: 8px; display: grid; place-items: center; cursor: pointer; transition: background-color 150ms ease; }
 .asst-x:hover { background: var(--muted); } .asst-x svg { width: 18px; height: 18px; }
 .asst-body { overflow-y: auto; overscroll-behavior: contain; padding: 14px 16px; display: flex; flex-direction: column; gap: 10px; }
@@ -594,10 +597,11 @@ body.asst-open .asst-fab { display: none; }
 
   <!-- STEP 6 -->
   <section class="step" id="step-6" data-step="6" aria-labelledby="h6s" hidden>
-    <div class="step-head"><h2 id="h6s">Download the workbook</h2><p>One Excel file with everything, built in this browser. Percentages and judgements are live formulas.</p></div>
+    <div class="step-head"><h2 id="h6s">Download your results</h2><p>An Excel workbook with every number and live formulas, and a PDF report in plain words. Both are made in this browser.</p></div>
     <ul class="wb-list" id="wb-list"></ul>
     <div class="flag" id="dl-flag" hidden><span class="dot warn" aria-hidden="true"></span><span id="dl-flag-t"></span></div>
-    <div class="row"><button class="btn primary big" type="button" data-dl="workbook">Download Excel Workbook</button></div>
+    <div class="row"><button class="btn primary big" type="button" data-dl="workbook">Download Excel Workbook</button><button class="btn big" type="button" data-dl="report">Download PDF Report</button><button class="btn big quiet" type="button" data-dl="chat" id="dl-chat" hidden>Save Assistant Conversation</button></div>
+    <p class="muted small">The PDF report is a short written account of the same results for sharing or printing. The workbook has every number with live formulas.</p>
     <p class="msg" id="msg6" aria-live="polite"></p>
     <div class="step-nav"><button class="btn quiet" type="button" data-go="5">Back</button><button class="btn quiet" type="button" id="start-over">Start Over With Another Sheet</button></div>
   </section>
@@ -605,7 +609,7 @@ body.asst-open .asst-fab { display: none; }
 
 <button type="button" class="asst-fab" id="asst-open" aria-controls="asst" aria-expanded="false"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M20 12.5c0 3.6-3.6 6.5-8 6.5-1 0-2-.15-2.9-.43L5 20l1.2-3.3C4.8 15.6 4 14.1 4 12.5 4 8.9 7.6 6 12 6s8 2.9 8 6.5Z"/></svg><span>Ask the Assistant</span><span class="badge" id="asst-badge" hidden></span></button>
 <section class="asst" id="asst" data-open="false" aria-hidden="true" role="dialog" aria-modal="false" aria-labelledby="asst-h">
-  <div class="asst-head"><h2 id="asst-h">Assistant<span class="sub">Fixes sheets and changes anything on this page</span></h2><button type="button" class="asst-x" id="asst-close" aria-label="Close the assistant"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" aria-hidden="true"><path d="M6 6l12 12M18 6L6 18"/></svg></button></div>
+  <div class="asst-head"><h2 id="asst-h">Assistant<span class="sub">Fixes sheets and changes anything on this page</span></h2><span class="asst-hbtns"><button type="button" class="asst-x" id="asst-save" aria-label="Save this conversation" title="Save this conversation" hidden><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 4v11m0 0-4-4m4 4 4-4M5 19h14"/></svg></button><button type="button" class="asst-x" id="asst-close" aria-label="Close the assistant"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" aria-hidden="true"><path d="M6 6l12 12M18 6L6 18"/></svg></button></span></div>
   <div class="asst-body" id="asst-body">
     <div class="asst-hello" id="asst-hello"><b>What do you need?</b>Tell me what to change, or attach your sheet and the rules (Excel, Google Sheets, PDF, Word, slides or a photo). I make the changes on the page and list them so you can undo any.</div>
     <div class="asst-sugg" id="asst-sugg"></div>

@@ -211,8 +211,48 @@
     render();
   }
   function workbook() {
-    if (!st.wb && st.base) st.wb = Book.build({ srcWb: st.src, origWb: st.origWb, sheetName: st.sheetName, parsed: st.parsed, cfg: st.cfg, base: st.base, sim: st.sim, sel: st.sel });
+    // Rebuilt for each download so the summary and assistant notes are current.
+    if (st.base) st.wb = Book.build({ srcWb: st.src, origWb: st.origWb, sheetName: st.sheetName, parsed: st.parsed, cfg: st.cfg, base: st.base, sim: st.sim, sel: st.sel, summary: summaryOf(), notes: notesOf() });
     return st.wb;
+  }
+  function subjectName() { return (st.parsed && st.parsed.blocks[0] && st.parsed.blocks[0].title) || 'Progress'; }
+  function fileBase() { return subjectName().replace(/[\\/:*?"<>|]/g, '-'); }
+  // One plain-language account of the results, used by the PDF report and the workbook's Summary sheet.
+  function summaryOf() {
+    var c = st.cfg, m = st.base, k = E.check(E.counted(m.items, c.basis), c), fx = E.findFixes(st.parsed, c).fixes;
+    var basisTxt = { both: 'grade and phase total judgements', grades: 'grade judgements', phases: 'phase total judgements' }[c.basis];
+    var P = function (v) { return Math.round(v * 1000) / 10 + '%'; };
+    var secs = [];
+    var verdict = k.weakOk && k.outOk && k.extraOk ? 'The actual results meet the targets.' : 'The actual results do not meet the targets.';
+    secs.push({ heading: 'Result', text: verdict + ' ' + k.weak + ' of ' + k.n + ' ' + basisTxt + ' are Weak (' + P(k.n ? k.weak / k.n : 0) + '; at most ' + k.maxW + ' allowed). ' + k.out + ' are Outstanding (' + P(k.n ? k.out / k.n : 0) + '; at most ' + k.maxO + ' allowed).' + (k.extra.length ? ' ' + k.extra.map(function (x) { return x.label + ': ' + (x.ok ? 'met' : 'not met') + ' (' + x.count + ' of ' + k.n + ').'; }).join(' ') : '') });
+    var d = k.d, cats = E.CATS.slice().reverse();
+    secs.push({ heading: 'How many of each judgement (actual)', table: { head: ['Judgement', 'Count', 'Share'], rows: cats.map(function (x) { return [x, d.counts[x], P(d.n ? d.counts[x] / d.n : 0)]; }).concat([['Total', d.n, '100%']]) } });
+    secs.push({ heading: 'Rules used', bullets: [
+      'Acceptable: at least ' + P(c.acc) + ' make expected or better progress' + (c.vw != null ? '; Very Weak below ' + P(c.vw) : '') + '.',
+      'Good, Very Good, Outstanding: at least ' + P(c.good) + ', ' + P(c.vg) + ', ' + P(c.out) + ' make better than expected progress.',
+      'Limits: Weak at most ' + P(c.capWeak) + ', Outstanding at most ' + P(c.capOut) + ', counted over ' + basisTxt + '.',
+      'Phase totals: ' + (c.totalMethod === 'points' ? 'average of grade points, rounding ' + (c.rounding === 'unspecified' ? 'not given (nearest point used for now, to be confirmed)' : c.rounding) : 'from summed student counts') + '.'
+    ].concat((c.extraRules || []).map(function (r) { return 'Extra rule: ' + (r.label || E.ruleLabel(r)) + '.'; })) });
+    secs.push({ heading: 'Corrections to the sheet', bullets: fx.length ? fx.map(function (f) { return f.what + ': ' + f.detail; }) : ['Nothing needed correcting.'] });
+    var totals = m.items.filter(function (x) { return x.kind === 'total'; });
+    if (totals.length) secs.push({ heading: 'Phase totals', table: { head: ['Phase', 'Average points', 'Rounded', 'Judgement', 'Note'], rows: totals.map(function (t) { return [(t.block && st.parsed.blocks.length > 1 ? t.block + ': ' : '') + t.label, t.avg == null ? '' : Math.round(t.avg * 100) / 100, t.rounded == null ? '' : t.rounded, t.judg, t.roundingFlag ? 'Rounding to confirm' : '']; }) } });
+    secs.push({ heading: 'Every judgement (actual)', table: { head: ['Grade or total', 'Students', 'Assessed', 'Expected or better', 'Better than expected', 'Judgement'], rows: m.items.map(function (it) { return [(st.parsed.blocks.length > 1 ? it.block + ': ' : '') + (it.kind === 'total' ? it.label : it.grade), it.E, it.A, it.G + ' (' + P(it.I || 0) + ')', it.H + ' (' + P(it.J || 0) + ')', it.judg]; }) } });
+    var s = st.sim, o = s && s.options && s.options[st.sel];
+    if (!s || !s.needed) secs.push({ heading: 'Simulated scenario', text: 'Not needed: the actual results already meet the targets.' });
+    else if (s.failed) secs.push({ heading: 'Simulated scenario', text: 'No simulated scenario can meet the targets with these rules and limits.', tone: 'sim' });
+    else {
+      var ks = o.check;
+      secs.push({ heading: c.simTitle, tone: 'sim', text: 'For internal planning only. These are planning assumptions, not actual results. Option ' + String.fromCharCode(65 + st.sel) + ' of ' + s.options.length + ': ' + o.changed.length + ' judgements change, ' + o.students + ' students (' + P(o.share) + ' of assessed students). Largest change in one grade: ' + o.maxPts.toFixed(1) + ' percentage points' + (o.substantial ? ', which is a substantial adjustment' : '') + '. With these assumptions, ' + ks.weak + ' of ' + ks.n + ' are Weak and ' + ks.out + ' Outstanding.' });
+      secs.push({ heading: 'Planning assumptions', tone: 'sim', table: { head: ['Grade', 'Assumed change', 'From', 'To', 'Points', 'Judgement'], rows: o.cells.map(function (x) { return [(st.parsed.blocks.length > 1 ? x.to.block + ': ' : '') + x.to.grade, (x.dG ? (x.dG > 0 ? '+' : '') + x.dG + ' expected or better' : '') + (x.dH ? (x.dG ? ', ' : '') + (x.dH > 0 ? '+' : '') + x.dH + ' better than expected' : ''), x.from.G + ' / ' + x.from.H, x.to.G + ' / ' + x.to.H, x.pp.toFixed(1), x.from.judg + ' to ' + x.to.judg]; }) } });
+      var tc = o.changed.filter(function (x) { return x.from.kind === 'total'; });
+      if (tc.length) secs.push({ heading: 'Phase totals that change as a result', tone: 'sim', bullets: tc.map(function (x) { return x.to.label + ': ' + x.from.judg + ' to ' + x.to.judg + '.'; }) });
+    }
+    var src = st.srcName ? 'Source: ' + st.srcName + (st.sheetName ? ', sheet "' + st.sheetName + '"' : '') + '. ' : '';
+    return { title: subjectName() + ': progress judgements', subtitle: src + 'Prepared ' + new Date().toLocaleDateString('en-GB', { day: 'numeric', month: 'long', year: 'numeric' }) + '.', sections: secs };
+  }
+  function notesOf() {
+    var turns = (typeof AS !== 'undefined' && AS.turns) ? AS.turns : [], log = (typeof AS !== 'undefined' && AS.log) ? AS.log : [];
+    return { transcript: turns.map(function (t) { return { role: t.role, text: String(t.content).replace(/\n<<<BEGIN [\s\S]*?END [^\n]*>>>/g, '\n[attached document text]') }; }), changes: log.slice().reverse().map(function (x) { return x.label; }) };
   }
 
   /* ---------- steps ---------- */
@@ -519,36 +559,90 @@
       ['#2e75b6', Book.NAMES.totals, 'Points, average, rounding and total judgement for each phase'],
       ['#548235', Book.NAMES.log, 'Every correction made to the actual results'],
       opt ? ['#c00000', Book.NAMES.plan, 'Each simulated change written as a planning assumption, with its size'] : null,
-      ['#2e75b6', Book.NAMES.settings, 'The rules used. Change them in Excel and the formulas follow']
+      ['#2e75b6', Book.NAMES.settings, 'The rules used. Change them in Excel and the formulas follow'],
+      ['#262626', Book.NAMES.summary, 'The results in plain words, first in the workbook'],
+      (typeof AS !== 'undefined' && (AS.turns.length || AS.log.length)) ? ['#0000da', Book.NAMES.notes, 'What the assistant was asked, said and changed'] : null
     ].filter(Boolean);
     $('wb-list').innerHTML = list.map(function (x) { return '<li style="--c:' + x[0] + '"><b>' + esc(x[1]) + '</b><span>' + esc(x[2]) + '</span></li>'; }).join('');
     var flags = [];
     if (st.base.items.some(function (x) { return x.roundingFlag; }) || (opt && opt.model.items.some(function (x) { return x.roundingFlag; }))) flags.push('Some phase averages have decimals and no rounding rule was given. They are marked in the workbook for someone to confirm.');
     if (opt && opt.substantial) flags.push('The simulation needs a substantial change (' + opt.maxPts.toFixed(1) + ' percentage points in one grade). This is stated in the workbook.');
     $('dl-flag').hidden = !flags.length; $('dl-flag-t').textContent = flags.join(' ');
+    var hasChat = typeof AS !== 'undefined' && (AS.turns.length || AS.log.length);
+    $('dl-chat').hidden = !hasChat;
   }
 
   /* ---------- downloads ---------- */
   var dlP = null;
+  var MIME = { xlsx: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet', pdf: 'application/pdf', md: 'text/markdown', txt: 'text/plain' };
   function downloads() {
-    var plain = { save: function (req) { return new Promise(function (res) { var url = URL.createObjectURL(new Blob([req.data], { type: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet' })); var a = document.createElement('a'); a.href = url; a.download = req.filename; document.body.appendChild(a); a.click(); a.remove(); setTimeout(function () { URL.revokeObjectURL(url); }, 4000); res({ status: 'saved' }); }); } };
+    var plain = { save: function (req) { return new Promise(function (res) { var ext = req.filename.split('.').pop(); var url = URL.createObjectURL(req.data instanceof Blob ? req.data : new Blob([req.data], { type: MIME[ext] || 'application/octet-stream' })); var a = document.createElement('a'); a.href = url; a.download = req.filename; document.body.appendChild(a); a.click(); a.remove(); setTimeout(function () { URL.revokeObjectURL(url); }, 4000); res({ status: 'saved' }); }); } };
     if (!dlP) dlP = (window.claude && typeof window.claude.use === 'function') ? window.claude.use('downloads').catch(function () { return null; }) : Promise.resolve(plain);
     return dlP;
   }
+  function saveFile(name, dataP, out) {
+    msg(out, 'Preparing ' + name + '…');
+    return Promise.all([dataP, downloads()]).then(function (r) {
+      if (!r[1]) { msg(out, 'Downloads are not available in this view.', 'bad'); return false; }
+      return r[1].save({ filename: name, data: r[0] }).then(function () { msg(out, 'Saved ' + name + '.', 'ok'); return true; }, function (err) { var c = err && err.code; msg(out, c === 'declined' ? 'Download cancelled.' : 'The download did not go through. Try again.', c === 'declined' ? '' : 'bad'); return false; });
+    }).catch(function (err) { msg(out, name + ' could not be made (' + (err && err.message || err) + ').', 'bad'); return false; });
+  }
+  var PDF_LIBS = ['https://cdnjs.cloudflare.com/ajax/libs/jspdf/2.5.1/jspdf.umd.min.js', 'https://cdnjs.cloudflare.com/ajax/libs/jspdf-autotable/3.8.2/jspdf.plugin.autotable.min.js'];
+  var pdfLibP = null;
+  function loadPdfLibs() {
+    if (!pdfLibP) pdfLibP = PDF_LIBS.reduce(function (p, url) { return p.then(function () { return new Promise(function (res, rej) { var el = document.createElement('script'); el.src = url; el.onload = res; el.onerror = function () { pdfLibP = null; rej(new Error('the PDF writer did not load')); }; document.head.appendChild(el); }); }); }, Promise.resolve());
+    return pdfLibP;
+  }
+  // A4 PDF of the same summary as the workbook's Summary sheet, plus the assistant's notes.
+  function reportPdf() {
+    var sm = summaryOf(), nt = notesOf();
+    return loadPdfLibs().then(function () {
+      var doc = new window.jspdf.jsPDF({ unit: 'pt', format: 'a4' }), W = doc.internal.pageSize.getWidth(), H = doc.internal.pageSize.getHeight(), M = 48, y = M;
+      var INK = [38, 38, 38], MUTED = [110, 110, 115], SIM = [0, 0, 218];
+      function need(h) { if (y + h > H - M) { doc.addPage(); y = M; } }
+      function para(t, size, color, bold) { doc.setFont('helvetica', bold ? 'bold' : 'normal'); doc.setFontSize(size); doc.setTextColor.apply(doc, color); var lines = doc.splitTextToSize(String(t), W - 2 * M); lines.forEach(function (l) { need(size * 1.35); doc.text(l, M, y + size); y += size * 1.35; }); }
+      para(sm.title, 18, INK, true); y += 2; para(sm.subtitle, 9.5, MUTED); y += 10;
+      sm.sections.forEach(function (sec) {
+        need(40); y += 6; para(sec.heading, 12.5, sec.tone === 'sim' ? SIM : INK, true); y += 3;
+        if (sec.text) { para(sec.text, 10, INK); y += 4; }
+        (sec.bullets || []).forEach(function (b) { var lines = doc.splitTextToSize(String(b), W - 2 * M - 12); doc.setFont('helvetica', 'normal'); doc.setFontSize(10); doc.setTextColor.apply(doc, INK); lines.forEach(function (l, i) { need(13.5); if (i === 0) doc.text('\u2022', M, y + 10); doc.text(l, M + 12, y + 10); y += 13.5; }); });
+        if (sec.table) {
+          doc.autoTable({ startY: y + 2, head: [sec.table.head], body: sec.table.rows.map(function (r) { return r.map(function (v) { return v == null ? '' : String(v); }); }), margin: { left: M, right: M }, theme: 'grid',
+            styles: { font: 'helvetica', fontSize: 8.5, cellPadding: 4, lineColor: [225, 225, 228], lineWidth: 0.5, textColor: INK },
+            headStyles: { fillColor: sec.tone === 'sim' ? [231, 231, 252] : [244, 244, 245], textColor: INK, fontStyle: 'bold' },
+            didParseCell: function (h) { if (h.section === 'body' && /^(Weak|Very Weak)$/.test(h.cell.raw)) h.cell.styles.textColor = [192, 0, 0]; } });
+          y = doc.lastAutoTable.finalY + 8;
+        }
+      });
+      if (nt.changes.length || nt.transcript.length) {
+        doc.addPage(); y = M; para('Assistant notes', 14, INK, true); para('What the assistant was asked, what it said, and what it changed on the page. The results above already include these changes.', 9.5, MUTED); y += 8;
+        if (nt.changes.length) { para('Changes made', 11, INK, true); nt.changes.forEach(function (c, i) { para((i + 1) + '. ' + c, 10, INK); }); y += 8; }
+        nt.transcript.forEach(function (m) { need(30); para(m.role === 'user' ? 'Asked' : 'Assistant', 10, m.role === 'user' ? SIM : INK, true); para(String(m.text).replace(/\*\*/g, '').slice(0, 12000), 9.5, INK); y += 6; });
+      }
+      var n = doc.getNumberOfPages();
+      for (var i = 1; i <= n; i++) { doc.setPage(i); doc.setFont('helvetica', 'normal'); doc.setFontSize(8); doc.setTextColor.apply(doc, MUTED); doc.text(sm.title + '   Page ' + i + ' of ' + n, M, H - 24); }
+      return doc.output('arraybuffer');
+    });
+  }
+  function chatText() {
+    var nt = notesOf(), lines = ['# ' + subjectName() + ': assistant conversation', '', 'Saved ' + new Date().toLocaleString('en-GB') + '.', ''];
+    if (nt.changes.length) { lines.push('## Changes made', ''); nt.changes.forEach(function (c, i) { lines.push((i + 1) + '. ' + c); }); lines.push(''); }
+    lines.push('## Conversation', '');
+    nt.transcript.forEach(function (m) { lines.push('**' + (m.role === 'user' ? 'Asked' : 'Assistant') + ':**', '', m.text, ''); });
+    return lines.join('\n');
+  }
+  // Exposed so the assistant can offer download buttons in its replies.
+  function download(kind, out) {
+    out = out || 'msg6';
+    if (kind === 'template') { if (typeof ExcelJS === 'undefined') { msg('msg1', 'The Excel writer did not load. Reload the page and try again.', 'bad'); return; } return saveFile('Progress Judgements - Blank Template.xlsx', Book.template().xlsx.writeBuffer(), 'msg1'); }
+    if (!st.base) { msg(out, 'Load a sheet first.', 'bad'); return; }
+    if (kind === 'workbook') { if (typeof ExcelJS === 'undefined') { msg(out, 'The Excel writer did not load. Reload the page and try again.', 'bad'); return; } var wb; try { wb = workbook(); } catch (err) { msg(out, 'The workbook could not be built (' + err.message + ').', 'bad'); return; } return saveFile(fileBase() + ' - Actual and Simulated Results.xlsx', wb.xlsx.writeBuffer().then(function (b) { return new Uint8Array(b); }), out); }
+    if (kind === 'report') return saveFile(fileBase() + ' - Report.pdf', reportPdf().then(function (b) { return new Uint8Array(b); }), out);
+    if (kind === 'chat') return saveFile(fileBase() + ' - Assistant conversation.md', Promise.resolve(chatText()), out);
+  }
   document.addEventListener('click', function (e) {
     var b = e.target.closest && e.target.closest('[data-dl]'); if (!b) return;
-    var kind = b.dataset.dl, out = kind === 'template' ? 'msg1' : 'msg6';
-    if (typeof ExcelJS === 'undefined') { msg(out, 'The Excel writer did not load. Reload the page and try again.', 'bad'); return; }
-    var wb, name;
-    try {
-      if (kind === 'template') { wb = Book.template(); name = 'Progress Judgements - Blank Template.xlsx'; }
-      else { wb = workbook(); var subj = (st.parsed.blocks[0] && st.parsed.blocks[0].title) || 'Progress'; name = (subj + ' - Actual and Simulated Results.xlsx').replace(/[\\/:*?"<>|]/g, '-'); }
-    } catch (err) { msg(out, 'The workbook could not be built (' + err.message + ').', 'bad'); return; }
-    msg(out, 'Preparing ' + name + '…');
-    Promise.all([wb.xlsx.writeBuffer(), downloads()]).then(function (r) {
-      if (!r[1]) { msg(out, 'Downloads are not available in this view.', 'bad'); return; }
-      return r[1].save({ filename: name, data: new Uint8Array(r[0]) }).then(function () { msg(out, 'Saved ' + name + '.', 'ok'); }, function (err) { var c = err && err.code; msg(out, c === 'declined' ? 'Download cancelled.' : 'The download did not go through. Try again.', c === 'declined' ? '' : 'bad'); });
-    }).catch(function (err) { msg(out, 'The workbook could not be built (' + (err && err.message) + ').', 'bad'); });
+    download(b.dataset.dl, b.dataset.out || (b.dataset.dl === 'template' ? 'msg1' : 'msg6'));
   });
   $('start-over').addEventListener('click', function () { st.src = null; st.origWb = null; st.headerRow = null; st.grid = null; st.parsed = null; st.base = null; st.sim = null; st.manual = null; st.edits = {}; st.wb = null; $('title').textContent = 'Progress Judgements'; $('sheet-pick').hidden = true; msg('msg1', 'Cleared. Nothing from that sheet is kept.', 'ok'); go(1); });
 

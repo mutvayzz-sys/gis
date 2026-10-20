@@ -4,7 +4,7 @@
 // hits something it cannot do; it carries a short summary only, never sheet data.
 import PROMPT from '../src/prompt.txt';
 
-const TOOLS = new Set(['get_overview', 'read_cells', 'choose_sheet', 'set_header_row', 'set_column', 'set_rules', 'edit_number', 'set_cell', 'choose_option', 'go_to_step', 'set_cells', 'enter_rows', 'set_phase', 'add_rule', 'remove_rule', 'set_simulation_limits', 'set_simulated_numbers', 'report_gap', 'undo_last_change']);
+const TOOLS = new Set(['get_overview', 'read_cells', 'choose_sheet', 'set_header_row', 'set_column', 'set_rules', 'edit_number', 'set_cell', 'choose_option', 'go_to_step', 'set_cells', 'enter_rows', 'set_phase', 'add_rule', 'remove_rule', 'set_simulation_limits', 'set_simulated_numbers', 'report_gap', 'undo_last_change', 'offer_downloads']);
 const MAX_BODY = 4 * 1024 * 1024; // room for a few attached pictures
 const REPORT_REPO = 'mutvayzz-sys/gis';
 

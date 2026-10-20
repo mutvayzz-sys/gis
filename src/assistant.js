@@ -171,12 +171,15 @@
     { name: 'undo_last_change', description: 'Undoes the most recent change in the change list (yours or the one before it), exactly as the Undo button does. Use it to back out a change that did not work, instead of changing things back by hand.',
       inputSchema: { type: 'object', properties: {} },
       execute: function () { var l = undoLast(true); if (!l) throw new Error('Nothing to undo'); return 'Undone: ' + l + '. ' + (AS.log[0] ? 'Latest change now: ' + AS.log[0].label : 'No changes left.'); } },
+    { name: 'offer_downloads', description: 'Shows download buttons under your reply so the person can save their results. Use it whenever they ask to download, export, save or share the work, or when you finish a review. Options: "workbook" (Excel with every sheet, summary and your notes), "report" (a PDF written summary), "chat" (this conversation and the change list). Browsers need the person to click, so you cannot download for them; tell them to use the buttons.',
+      inputSchema: { type: 'object', properties: { items: { type: 'array', items: { type: 'string', enum: ['workbook', 'report', 'chat'] } } }, required: ['items'] },
+      execute: function (i) { var it = (i.items || []).filter(function (x) { return ['workbook', 'report', 'chat'].indexOf(x) >= 0; }); if (!it.length) throw new Error('Nothing to offer'); if (!st.base && it.some(function (x) { return x !== 'chat'; })) throw new Error('Nothing is loaded yet, so there are no results to download.'); AS.offer = it; return 'Buttons will appear under your reply: ' + it.join(', ') + '.'; } },
     { name: 'go_to_step', description: 'Shows a step of the page so the person can see the result: 1 Load, 2 Check, 3 Rules (including extra rules), 4 Results, 5 Simulation (including its limits), 6 Download.', inputSchema: { type: 'object', properties: { step: { type: 'integer' } }, required: ['step'] },
       execute: function (i) { go(+i.step); if (+i.step === 5) { var d = $('simlim'); if (d && (st.cfg.simMaxStudents != null || st.cfg.simMaxPts != null || (st.cfg.simLocked || []).length || Object.keys(st.cfg.simPinned || {}).length)) d.open = true; } return 'Showing step ' + st.step; } }
   ];
 
   /* ---------- transports ---------- */
-  var PRIORITY = ['get_overview', 'read_cells', 'set_column', 'set_header_row', 'set_cells', 'enter_rows', 'set_rules', 'add_rule', 'set_simulation_limits', 'set_simulated_numbers', 'choose_option', 'go_to_step', 'undo_last_change', 'edit_number', 'set_phase', 'remove_rule', 'choose_sheet', 'set_cell'];
+  var PRIORITY = ['get_overview', 'read_cells', 'set_column', 'set_header_row', 'set_cells', 'enter_rows', 'set_rules', 'add_rule', 'set_simulation_limits', 'set_simulated_numbers', 'choose_option', 'go_to_step', 'undo_last_change', 'offer_downloads', 'edit_number', 'set_phase', 'remove_rule', 'choose_sheet', 'set_cell'];
   function detect() {
     if (window.claude && typeof window.claude.use === 'function') {
       return window.claude.use('sample').then(function (s) {
@@ -249,11 +252,12 @@
   function badge() { var b = $('asst-badge'); b.hidden = !unseen; b.textContent = unseen; }
   fab.addEventListener('click', function () { openPanel(!isOpen()); });
   $('asst-close').addEventListener('click', function () { openPanel(false); });
+  $('asst-save').addEventListener('click', function () { var n = bubble('note', ''); n.id = 'asst-savemsg'; download('chat', 'asst-savemsg'); setTimeout(function () { if (n.id === 'asst-savemsg') n.removeAttribute('id'); }, 8000); });
   document.addEventListener('keydown', function (e) { if (e.key === 'Escape' && isOpen()) openPanel(false); });
   // Small, safe Markdown: **bold**, bullet lists, paragraphs. Everything is escaped first.
   function md(text) {
     var lines = esc(String(text || '')).split('\n'), html = '', list = 0;
-    function inline(t) { return t.replace(/\*\*([^*]+)\*\*/g, '<b>$1</b>').replace(/`([^`]+)`/g, '<code>$1</code>'); }
+    function inline(t) { return t.replace(/\*\*([^*]+)\*\*/g, '<b>$1</b>').replace(/(^|[\s(])\*([^*\s][^*]*)\*(?=[\s.,;:!?)]|$)/g, '$1<i>$2</i>').replace(/`([^`]+)`/g, '<code>$1</code>'); }
     lines.forEach(function (l) {
       var m = /^(\s*)[-*] (.*)$/.exec(l), lvl = m ? (m[1].length >= 2 ? 2 : 1) : 0;
       while (list > lvl) { html += '</ul>'; list--; }
@@ -265,7 +269,7 @@
     return html;
   }
   function bubble(role, text, cls) { var d = document.createElement('div'); d.className = 'bub ' + role + (cls ? ' ' + cls : ''); d.textContent = text; log.appendChild(d); $('asst-hello').hidden = true; var bd = $('asst-body'); bd.scrollTop = bd.scrollHeight; return d; }
-  var NICE = { get_overview: 'Looking at the page', read_cells: 'Reading cells', choose_sheet: 'Switching sheet', set_header_row: 'Setting the heading row', set_column: 'Matching a column', set_rules: 'Changing rules', edit_number: 'Correcting a number', set_cell: 'Fixing a cell', set_cells: 'Fixing cells', enter_rows: 'Typing the rows in', set_phase: 'Setting phases', add_rule: 'Adding a rule', remove_rule: 'Removing a rule', set_simulation_limits: 'Setting simulation limits', set_simulated_numbers: 'Changing the simulation', report_gap: 'Passing it on', undo_last_change: 'Undoing a change', choose_option: 'Choosing an option', go_to_step: 'Opening a step' };
+  var NICE = { get_overview: 'Looking at the page', read_cells: 'Reading cells', choose_sheet: 'Switching sheet', set_header_row: 'Setting the heading row', set_column: 'Matching a column', set_rules: 'Changing rules', edit_number: 'Correcting a number', set_cell: 'Fixing a cell', set_cells: 'Fixing cells', enter_rows: 'Typing the rows in', set_phase: 'Setting phases', add_rule: 'Adding a rule', remove_rule: 'Removing a rule', set_simulation_limits: 'Setting simulation limits', set_simulated_numbers: 'Changing the simulation', report_gap: 'Passing it on', undo_last_change: 'Undoing a change', offer_downloads: 'Getting the downloads ready', choose_option: 'Choosing an option', go_to_step: 'Opening a step' };
   var actEl = null;
   function activity(name) { if (actEl) actEl.textContent = (NICE[name] || name) + '…'; }
   function renderSugg() {
@@ -278,6 +282,7 @@
     $('asst-sugg').innerHTML = q.map(function (x) { return '<button type="button" class="chip-btn" data-' + (x[0] === 's' ? 'q' : 'fill') + '="' + esc(x[1]) + '">' + esc(x[1].replace(/:\s*$|\s+$/, '')) + '</button>'; }).join('');
   }
   function renderLog() {
+    $('asst-save').hidden = !(AS.turns.length || AS.log.length);
     var box = $('asst-changes');
     box.hidden = !AS.log.length;
     $('asst-changes-t').textContent = 'What it changed (' + AS.log.length + ')';
@@ -510,7 +515,15 @@
       return Promise.all(prep.blobs.map(blobB64)).then(function (b64) { return runApi(prep.text, function (t) { out.textContent = t; out.appendChild(actEl); }, b64); });
     });
     p.then(function (final) {
-      out.innerHTML = md(final || 'Done.'); out.classList.add('md'); AS.turns.push({ role: 'user', content: histText }, { role: 'assistant', content: final || 'Done.' });
+      out.innerHTML = md(final || 'Done.'); out.classList.add('md');
+      if (AS.offer && AS.offer.length) {
+        var LBL = { workbook: 'Excel Workbook', report: 'PDF Report', chat: 'This Conversation' };
+        var box = document.createElement('div'); box.className = 'dl-offer';
+        AS.offer.forEach(function (k) { var b = document.createElement('button'); b.type = 'button'; b.className = 'btn'; b.dataset.dl = k; b.dataset.out = 'asst-dlmsg'; b.textContent = 'Download ' + LBL[k]; box.appendChild(b); });
+        var note = document.createElement('p'); note.className = 'msg'; note.id = 'asst-dlmsg'; note.setAttribute('aria-live', 'polite');
+        var old = document.getElementById('asst-dlmsg'); if (old) old.removeAttribute('id');
+        out.appendChild(box); out.appendChild(note); AS.offer = null;
+      } AS.turns.push({ role: 'user', content: histText }, { role: 'assistant', content: final || 'Done.' }); $('asst-save').hidden = false;
     }, function (e) {
       var c = e && e.code;
       if (c === 'cancelled' || (e && e.name === 'AbortError')) out.textContent = (e.text || out.textContent.replace(/\S*…$/, '')) + ' (stopped)';

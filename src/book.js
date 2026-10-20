@@ -8,7 +8,8 @@ var Book = (function (E) {
   var L = E.colLetter;
   var NAMES = {
     orig: 'Original (as received)', actual: 'Actual results (corrected)', comp: 'Comparison', counts: 'Judgement counts',
-    totals: 'Total judgements', log: 'Corrections log', plan: 'Planning assumptions', settings: 'Settings'
+    totals: 'Total judgements', log: 'Corrections log', plan: 'Planning assumptions', settings: 'Settings',
+    summary: 'Summary', notes: 'Assistant notes'
   };
   function simSheetName(cfg) {
     var n = String(cfg.simTitle || 'Simulated scenario—not actual results').replace(/[\[\]:*?\/\\]/g, '-');
@@ -274,8 +275,10 @@ var Book = (function (E) {
     totalsSheet(wb, ctx, opt, simName, help);
     logSheet(wb, ctx);
     planSheet(wb, ctx, opt);
+    if (ctx.summary) summarySheet(wb, ctx.summary);
+    if (ctx.notes && (ctx.notes.transcript.length || ctx.notes.changes.length)) notesSheet(wb, ctx.notes);
     // order
-    var order = [NAMES.orig, NAMES.actual].concat(s ? [simName] : []).concat([NAMES.comp, NAMES.counts, NAMES.totals, NAMES.log, NAMES.plan, NAMES.settings]);
+    var order = (ctx.summary ? [NAMES.summary] : []).concat([NAMES.orig, NAMES.actual]).concat(s ? [simName] : []).concat([NAMES.comp, NAMES.counts, NAMES.totals, NAMES.log, NAMES.plan]).concat(ctx.notes && wb.getWorksheet(NAMES.notes) ? [NAMES.notes] : []).concat([NAMES.settings]);
     order.forEach(function (n, i) { var w = wb.getWorksheet(n); if (w) w.orderNo = i; });
     wb.eachSheet(function (w) { setup(w); });
     return wb;
@@ -448,6 +451,45 @@ var Book = (function (E) {
     if (Object.keys(cfg.simPinned || {}).length) notes.push('Some changes were chosen by hand rather than by the fewest-changes search; they are included above.');
     (opt.check.extra || []).forEach(function (x) { notes.push(x.label + ': ' + (x.ok ? 'met' : 'not met') + ' in this scenario (' + x.count + ' of ' + opt.check.n + ').'); });
     notes.forEach(function (t, i) { var x = ws.getCell(last + 2 + i, 2); x.value = '• ' + t; x.font = font({ color: i === 1 && opt.substantial ? 'FFC00000' : 'FF262626', bold: i === 0 }); });
+  }
+
+  /* ---------- plain-language summary and assistant notes ---------- */
+  // summary: {title, subtitle, sections: [{heading, text?, bullets?, table?: {head, rows}, tone?}]}
+  function summarySheet(wb, sm) {
+    var ws = wb.addWorksheet(NAMES.summary, { properties: { tabColor: { argb: 'FF262626' } } }); setup(ws);
+    ws.getColumn(1).width = 3; [26, 16, 16, 16, 16, 16, 16].forEach(function (w, i) { ws.getColumn(2 + i).width = w; });
+    var r = 2;
+    var t = ws.getCell(r, 2); t.value = sm.title; t.font = font({ size: 16, bold: true }); r++;
+    if (sm.subtitle) { var st0 = ws.getCell(r, 2); st0.value = sm.subtitle; st0.font = font({ italic: true, color: 'FF595959' }); r++; }
+    r++;
+    sm.sections.forEach(function (sec) {
+      var h = ws.getCell(r, 2); h.value = sec.heading; h.font = font({ size: 12, bold: true, color: sec.tone === 'sim' ? 'FFC00000' : 'FF262626' }); r++;
+      if (sec.text) { ws.mergeCells(r, 2, r, 8); var x = ws.getCell(r, 2); x.value = sec.text; x.alignment = { wrapText: true, vertical: 'top' }; x.font = font(); ws.getRow(r).height = Math.max(16, 15 * Math.ceil(sec.text.length / 110)); r++; }
+      (sec.bullets || []).forEach(function (b) { ws.mergeCells(r, 2, r, 8); var x = ws.getCell(r, 2); x.value = '\u2022 ' + b; x.alignment = { wrapText: true, vertical: 'top' }; x.font = font(); ws.getRow(r).height = Math.max(16, 15 * Math.ceil(b.length / 110)); r++; });
+      if (sec.table) { r = table(ws, r, 2, sec.table.head, sec.table.rows, { fills: function () { return sec.tone === 'sim' ? C.blue : C.cream; }, headFills: sec.table.head.map(function () { return sec.tone === 'sim' ? C.blue : C.yel; }), left: { 0: true }, headHeight: 30 }) + 1; }
+      r++;
+    });
+  }
+  function notesSheet(wb, nt) {
+    var ws = wb.addWorksheet(NAMES.notes, { properties: { tabColor: { argb: 'FF0000DA' } } }); setup(ws);
+    ws.getColumn(1).width = 3; ws.getColumn(2).width = 14; ws.getColumn(3).width = 100;
+    ws.getCell('B2').value = 'What the assistant was asked, what it said, and what it changed'; ws.getCell('B2').font = font({ size: 14, bold: true });
+    ws.getCell('B3').value = 'Changes listed here were made on the page before this workbook was built, and are already reflected in the other sheets.'; ws.getCell('B3').font = font({ italic: true, color: 'FF595959' });
+    var r = 5;
+    if (nt.changes.length) {
+      ws.getCell(r, 2).value = 'Changes made'; ws.getCell(r, 2).font = font({ bold: true, size: 12 }); r++;
+      nt.changes.forEach(function (c, i) { ws.getCell(r, 2).value = i + 1; ws.getCell(r, 3).value = c; ws.getCell(r, 3).alignment = { wrapText: true }; r++; });
+      r++;
+    }
+    if (nt.transcript.length) {
+      ws.getCell(r, 2).value = 'Conversation'; ws.getCell(r, 2).font = font({ bold: true, size: 12 }); r++;
+      nt.transcript.forEach(function (m) {
+        var a = ws.getCell(r, 2), b = ws.getCell(r, 3); a.value = m.role === 'user' ? 'Asked' : 'Assistant'; a.font = font({ bold: true, color: m.role === 'user' ? 'FF0000DA' : 'FF262626' }); a.alignment = { vertical: 'top' };
+        var txt = String(m.text).replace(/\*\*/g, '').slice(0, 30000); b.value = txt; b.alignment = { wrapText: true, vertical: 'top' }; b.font = font();
+        ws.getRow(r).height = Math.min(409, Math.max(16, 15 * txt.split('\n').reduce(function (n, l) { return n + Math.max(1, Math.ceil(l.length / 120)); }, 0)));
+        r++;
+      });
+    }
   }
 
   /* ---------- a source workbook for pasted or typed data ---------- */

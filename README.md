@@ -52,3 +52,7 @@ The assistant calls `/api/report`, which opens a GitHub issue labelled `assistan
 The assistant's paperclip takes spreadsheets (xlsx, xls, xlsb, ods, csv, Numbers), PDFs (scanned ones are sent as page pictures), Word (docx, old doc as rough text), PowerPoint (pptx), OpenDocument, RTF, HTML, text and pictures. Files are read in the visitor's browser; nothing is uploaded to this site or stored. A spreadsheet is loaded into the page; the text or pictures of the other files go to Claude with that message only.
 
 A Google Sheets link (shared as "Anyone with the link") can be pasted on the first step or in the chat. `/api/gsheet` fetches it as .xlsx and passes it straight to the browser without storing it.
+
+## Downloads
+
+Step 6 offers the Excel workbook (every sheet with live formulas, a plain-language Summary sheet first, and an Assistant notes sheet when the assistant was used), a PDF report of the same summary, and the assistant conversation as a Markdown file. The assistant can put the same download buttons under its replies. All files are built in the browser.

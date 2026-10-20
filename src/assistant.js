@@ -180,28 +180,33 @@
         if (!s) return null;
         AS.sample = s;
         return (s.limits ? s.limits().catch(function () { return null; }) : Promise.resolve(null)).then(function (l) {
+          AS.imgMax = l && l.images ? (l.images.maxCount || 1) : 0; AS.maxBytes = l && l.maxPromptBytes || 0;
           if (l && l.tools) { AS.maxTools = l.tools.maxCount || TOOLS.length; return 'claude'; }
           return 'claude-text';
         });
       }).catch(function () { return null; });
     }
-    return fetch('/api/health', { method: 'GET' }).then(function (r) { return r.ok ? r.json() : null; }).then(function (j) { AS.canReport = !!(j && j.reports); return j && j.ok ? 'api' : null; }).catch(function () { return null; });
+    return fetch('/api/health', { method: 'GET' }).then(function (r) { return r.ok ? r.json() : null; }).then(function (j) { AS.canReport = !!(j && j.reports); AS.imgMax = IMG_MAX; return j && j.ok ? 'api' : null; }).catch(function () { return null; });
   }
   function pageTools() {
     var max = Math.max(1, AS.maxTools || TOOLS.length);
     var list = TOOLS.filter(function (t) { return t.name !== 'report_gap' || AS.canReport; }).sort(function (a, b) { var x = PRIORITY.indexOf(a.name), y = PRIORITY.indexOf(b.name); return (x < 0 ? 99 : x) - (y < 0 ? 99 : y); }).slice(0, max);
     return list.map(function (t) { return { name: t.name, description: t.description, inputSchema: t.inputSchema, execute: function (inp) { activity(t.name, inp); return t.execute(inp || {}); } }; });
   }
-  function runClaude(userText, onText) {
+  function runClaude(userText, onText, images) {
     var turns = [{ role: 'user', content: INSTRUCTIONS + '\n\nCURRENT STATE (JSON):\n' + JSON.stringify(overview()).slice(0, 60000) }].concat(AS.turns.slice(-12)).concat([{ role: 'user', content: userText }]);
     var noTools = AS.mode === 'claude-text';
     if (noTools) turns[0].content += '\n\nIN THIS VIEW YOU HAVE NO TOOLS: you can explain and advise, but you cannot change anything on the page. If they ask for a change, tell them exactly where on the page to make it (step and field).';
-    return AS.sample(turns, noTools ? { cache: false, signal: AS.ctl.signal, onText: function (u) { onText(u.text); } } : { tools: pageTools(), cache: false, signal: AS.ctl.signal, onText: function (u) { onText(u.text); } })
+    var opts = noTools ? { cache: false, signal: AS.ctl.signal, onText: function (u) { onText(u.text); } } : { tools: pageTools(), cache: false, signal: AS.ctl.signal, onText: function (u) { onText(u.text); } };
+    if (images && images.length && AS.imgMax) opts.images = images.slice(0, AS.imgMax);
+    return AS.sample(turns, opts)
       .then(function (r) { return r.text; });
   }
-  function runApi(userText, onText) {
+  function runApi(userText, onText, images) {
     var msgs = AS.turns.slice(-12).map(function (t) { return { role: t.role, content: t.content }; });
-    msgs.push({ role: 'user', content: 'CURRENT STATE (JSON):\n' + JSON.stringify(overview()).slice(0, 60000) + '\n\nREQUEST:\n' + userText });
+    var textPart = { type: 'text', text: 'CURRENT STATE (JSON):\n' + JSON.stringify(overview()).slice(0, 60000) + '\n\nREQUEST:\n' + userText };
+    if (images && images.length) { msgs.push({ role: 'user', content: images.slice(0, IMG_MAX).map(function (d) { return { type: 'image', source: { type: 'base64', media_type: 'image/jpeg', data: d } }; }).concat([textPart]) }); }
+    else msgs.push({ role: 'user', content: textPart.text });
     var tools = TOOLS.filter(function (t) { return t.name !== 'report_gap' || AS.canReport; }).map(function (t) { return { name: t.name, description: t.description, input_schema: t.inputSchema }; });
     var said = '';
     function round(n) {
@@ -277,18 +282,212 @@
     restore(x.before); renderLog(); bubble('note', 'Undone: ' + x.label + '.');
   });
   $('asst-banner-open') && $('asst-banner-open').addEventListener('click', function () { openPanel(true); $('asst-changes').open = true; });
+  /* ---------- attachments: read in the browser, never uploaded anywhere but Claude ---------- */
+  var CDN = 'https://cdnjs.cloudflare.com/ajax/libs/';
+  var LIBS = { pdf: CDN + 'pdf.js/3.11.174/pdf.min.js', pdfWorker: CDN + 'pdf.js/3.11.174/pdf.worker.min.js', zip: CDN + 'jszip/3.10.1/jszip.min.js' };
+  var scriptP = {};
+  function loadScript(url) {
+    if (!scriptP[url]) scriptP[url] = new Promise(function (res, rej) { var el = document.createElement('script'); el.src = url; el.async = true; el.onload = function () { res(); }; el.onerror = function () { delete scriptP[url]; rej(new Error('Could not load a file reader. Check the connection and try again.')); }; document.head.appendChild(el); });
+    return scriptP[url];
+  }
+  var DOC_CAP = 40000, IMG_MAX = 5, FILE_MAX = 8;
+  function extOf(name) { return (String(name).split('.').pop() || '').toLowerCase(); }
+  function kindOf(f) {
+    var e = extOf(f.name), t = f.type || '';
+    if (SHEET_EXT.test(e) && e !== 'txt') return 'sheet';
+    if (/^image\//.test(t) || /^(png|jpe?g|webp|gif|heic|heif|bmp)$/.test(e)) return 'image';
+    if (e === 'pdf' || t === 'application/pdf') return 'pdf';
+    if (/^(docx|pptx|odt|odp)$/.test(e)) return 'office';
+    if (e === 'doc' || e === 'ppt') return 'legacy';
+    if (e === 'rtf') return 'rtf';
+    if (/^(html?|xhtml)$/.test(e)) return 'html';
+    if (/^(txt|md|markdown|json|xml|text)$/.test(e) || /^text\//.test(t)) return 'text';
+    return 'unknown';
+  }
+  function cap(t) { t = String(t || '').replace(/\r/g, '').replace(/[ \t]+\n/g, '\n').replace(/\n{3,}/g, '\n\n').trim(); return t.length > DOC_CAP ? t.slice(0, DOC_CAP) + '\n[... the rest of this document was cut to keep the message small]' : t; }
+  function walkXml(root) {
+    var out = [];
+    function txt(node) { var s = ''; node.childNodes.forEach(function (c) { if (c.nodeType === 3) s += c.nodeValue; else if (c.nodeType === 1) { var l = c.localName; if (l === 'tab') s += '\t'; else if (l === 'br' || l === 'cr' || l === 'line-break') s += '\n'; else if (l === 's') s += ' '; else if (l !== 'instrText' && l !== 'delText') s += txt(c); } }); return s; }
+    function cellText(tc) { var parts = []; (function w(n) { n.childNodes.forEach(function (c) { if (c.nodeType !== 1) return; if (c.localName === 'p' || c.localName === 'h') parts.push(txt(c).trim()); else w(c); }); })(tc); return parts.filter(Boolean).join(' '); }
+    function walk(node) {
+      node.childNodes.forEach(function (c) {
+        if (c.nodeType !== 1) return;
+        var l = c.localName;
+        if (l === 'p' || l === 'h') { var t = txt(c); if (t.trim()) out.push(t); }
+        else if (l === 'tbl' || l === 'table') {
+          var rows = [];
+          (function rw(n) { n.childNodes.forEach(function (r) { if (r.nodeType !== 1) return; if (r.localName === 'tr' || r.localName === 'table-row') { var cells = []; r.childNodes.forEach(function (tc) { if (tc.nodeType === 1 && (tc.localName === 'tc' || tc.localName === 'table-cell')) cells.push(cellText(tc)); }); rows.push(cells.join('\t')); } else rw(r); }); })(c);
+          out.push('[table]\n' + rows.join('\n') + '\n[end of table]');
+        } else walk(c);
+      });
+    }
+    walk(root);
+    return out.join('\n');
+  }
+  function readOffice(file) {
+    var e = extOf(file.name);
+    return loadScript(LIBS.zip).then(function () { return file.arrayBuffer(); }).then(function (buf) { return window.JSZip.loadAsync(buf); }).then(function (zip) {
+      var parser = new DOMParser();
+      function xml(path) { var f = zip.file(path); return f ? f.async('string').then(function (t) { return parser.parseFromString(t, 'application/xml'); }) : Promise.resolve(null); }
+      if (e === 'docx') return xml('word/document.xml').then(function (d) { if (!d) throw new Error('No document text found.'); return walkXml(d.documentElement); });
+      if (e === 'pptx') {
+        var names = Object.keys(zip.files).filter(function (n) { return /^ppt\/slides\/slide\d+\.xml$/.test(n); }).sort(function (a, b) { return +a.match(/\d+/)[0] - +b.match(/\d+/)[0]; });
+        return Promise.all(names.map(function (n) { return xml(n); })).then(function (docs) { return docs.map(function (d, i) { return 'Slide ' + (i + 1) + ':\n' + walkXml(d.documentElement); }).join('\n\n'); });
+      }
+      return xml('content.xml').then(function (d) { if (!d) throw new Error('No document text found.'); return walkXml(d.documentElement); });
+    });
+  }
+  function readPdf(file) {
+    return loadScript(LIBS.pdf).then(function () {
+      var lib = window.pdfjsLib; lib.GlobalWorkerOptions.workerSrc = LIBS.pdfWorker;
+      return file.arrayBuffer().then(function (buf) { return lib.getDocument({ data: new Uint8Array(buf), isEvalSupported: false }).promise; });
+    }).then(function (pdf) {
+      var n = Math.min(pdf.numPages, 40), pages = [];
+      var chain = Promise.resolve();
+      for (var i = 1; i <= n; i++) (function (k) { chain = chain.then(function () { return pdf.getPage(k).then(function (pg) { return pg.getTextContent().then(function (tc) { pages.push({ k: k, page: pg, text: layoutPdf(tc.items) }); }); }); }); })(i);
+      return chain.then(function () {
+        var all = pages.map(function (p) { return (pdf.numPages > 1 ? 'Page ' + p.k + ':\n' : '') + p.text; }).join('\n\n');
+        var chars = pages.reduce(function (a, p) { return a + p.text.replace(/\s/g, '').length; }, 0);
+        var res = { text: all + (pdf.numPages > n ? '\n[only the first ' + n + ' of ' + pdf.numPages + ' pages were read]' : ''), pages: pdf.numPages, images: [] };
+        if (chars > 40 * Math.min(n, 3)) return res;
+        // Looks scanned: send pictures of the first pages instead.
+        var pics = Promise.resolve();
+        pages.slice(0, 3).forEach(function (p) { pics = pics.then(function () { var vp0 = p.page.getViewport({ scale: 1 }), sc = Math.min(2, 1500 / Math.max(vp0.width, vp0.height)), vp = p.page.getViewport({ scale: sc }); var cv = document.createElement('canvas'); cv.width = Math.round(vp.width); cv.height = Math.round(vp.height); var ctx = cv.getContext('2d'); ctx.fillStyle = '#fff'; ctx.fillRect(0, 0, cv.width, cv.height); return p.page.render({ canvasContext: ctx, viewport: vp }).promise.then(function () { return canvasBlob(cv); }).then(function (b) { res.images.push(b); }); }); });
+        return pics.then(function () { res.scanned = true; return res; });
+      });
+    });
+  }
+  function layoutPdf(items) {
+    var lines = [];
+    items.forEach(function (it) { if (!it.str) return; var x = it.transform[4], y = Math.round(it.transform[5] / 3) * 3, w = it.width || 0; var L = lines.filter(function (l) { return Math.abs(l.y - y) <= 3; })[0]; if (!L) { L = { y: y, parts: [] }; lines.push(L); } L.parts.push({ x: x, w: w, s: it.str }); });
+    lines.sort(function (a, b) { return b.y - a.y; });
+    return lines.map(function (l) { l.parts.sort(function (a, b) { return a.x - b.x; }); var s = '', end = null; l.parts.forEach(function (p) { if (end != null) s += (p.x - end > 12 ? '\t' : (p.x - end > 1.5 ? ' ' : '')); s += p.s; end = p.x + p.w; }); return s; }).join('\n');
+  }
+  function canvasBlob(cv) { return new Promise(function (res) { cv.toBlob(function (b) { res(b); }, 'image/jpeg', 0.85); }); }
+  function readImage(file) {
+    return (window.createImageBitmap ? createImageBitmap(file) : Promise.reject(new Error('no decoder'))).then(function (bmp) {
+      var s = Math.min(1, 1568 / Math.max(bmp.width, bmp.height)), cv = document.createElement('canvas');
+      cv.width = Math.max(1, Math.round(bmp.width * s)); cv.height = Math.max(1, Math.round(bmp.height * s));
+      var ctx = cv.getContext('2d'); ctx.fillStyle = '#fff'; ctx.fillRect(0, 0, cv.width, cv.height); ctx.drawImage(bmp, 0, 0, cv.width, cv.height);
+      return canvasBlob(cv);
+    }, function () { throw new Error('This picture format cannot be opened here. Save it as JPG or PNG and attach that.'); });
+  }
+  function readLegacy(file) {
+    // Old binary Word/PowerPoint: keep only runs that look like real words (Latin, Arabic, Cyrillic).
+    function good(ch) { return ch === 7 || ch === 9 || ch === 10 || ch === 13 || (ch >= 32 && ch < 127) || (ch >= 0xA0 && ch <= 0x24F) || (ch >= 0x600 && ch <= 0x6FF) || (ch >= 0x400 && ch <= 0x4FF) || ch === 0x2019 || ch === 0x201C || ch === 0x201D || ch === 0x2013; }
+    function wordy(r) { var letters = (r.match(/[A-Za-zÀ-ɏ؀-ۿЀ-ӿ0-9]/g) || []).length; return r.length >= 8 && letters / r.length > 0.55 && /\s/.test(r) && !/^(Root Entry|Normal|Heading \d|Default Paragraph Font|Table Normal|No List|Times New Roman|Arial|Calibri|WordDocument|SummaryInformation|DocumentSummaryInformation|CompObj)$/i.test(r.trim()); }
+    return file.arrayBuffer().then(function (buf) {
+      var u8 = new Uint8Array(buf), runs8 = [], runs16 = [], r = '';
+      for (var i = 0; i < u8.length; i++) { if (good(u8[i]) && u8[i] < 127) r += String.fromCharCode(u8[i]); else { if (wordy(r)) runs8.push(r.trim()); r = ''; } }
+      if (wordy(r)) runs8.push(r.trim()); r = '';
+      for (var j = 0; j + 1 < u8.length; j += 2) { var cc = u8[j] | (u8[j + 1] << 8); if (good(cc)) r += String.fromCharCode(cc); else { if (wordy(r)) runs16.push(r.trim()); r = ''; } }
+      if (wordy(r)) runs16.push(r.trim());
+      function size(a) { return a.reduce(function (n, x) { return n + x.length; }, 0); }
+      var runs = size(runs16) > size(runs8) ? runs16 : runs8, seen = {};
+      runs = runs.filter(function (x) { if (seen[x]) return false; seen[x] = 1; return true; });
+      // The document body is normally one long run; style names and fonts are short ones.
+      var longest = runs.reduce(function (m, x) { return x.length > m.length ? x : m; }, '');
+      if (longest.length >= 120) runs = runs.filter(function (x) { return x.length >= longest.length * 0.3; });
+      var t = runs.join('\n').replace(/\u0007\u0007/g, '\n').replace(/\u0007/g, '\t').replace(/\r/g, '\n');
+      if (t.replace(/\s/g, '').length < 30) throw new Error('This old Word or PowerPoint file could not be read. Save it as .docx, .pptx or PDF and attach that.');
+      return '[rough text pulled from an old-format file; layout and tables may be lost]\n' + t;
+    });
+  }
+  function readRtf(file) { return file.text().then(function (t) { return t.replace(/\{\\\*[^{}]*\}/g, '').replace(/\\par[d]?/g, '\n').replace(/\\tab/g, '\t').replace(/\\cell/g, '\t').replace(/\\row/g, '\n').replace(/\\'[0-9a-f]{2}/gi, '').replace(/\\[a-z]+-?\d* ?/gi, '').replace(/[{}]/g, ''); }); }
+  function readHtml(file) { return file.text().then(function (t) { var d = new DOMParser().parseFromString(t, 'text/html'); d.querySelectorAll('script,style,noscript').forEach(function (x) { x.remove(); }); d.querySelectorAll('td,th').forEach(function (x) { x.append('\t'); }); d.querySelectorAll('tr,p,div,li,br,h1,h2,h3,h4,h5,h6').forEach(function (x) { x.append('\n'); }); return d.body ? d.body.textContent : ''; }); }
+  // Each attachment: {id, name, kind, status: 'reading'|'ready'|'error', text, images: [Blob], file, error}
+  AS.files = [];
+  var CLIP = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" aria-hidden="true"><path d="M6 6l12 12M18 6L6 18"/></svg>';
+  var KIND_LABEL = { sheet: 'spreadsheet', pdf: 'PDF', office: 'document', legacy: 'document', rtf: 'document', html: 'web page', text: 'text', image: 'picture', unknown: 'file' };
+  function renderFiles() {
+    $('asst-files').innerHTML = AS.files.map(function (f) { return '<span class="fchip' + (f.status === 'reading' ? ' busy' : '') + (f.status === 'error' ? ' bad' : '') + '" title="' + esc(f.error || f.name) + '"><span class="nm">' + esc(f.name) + '</span><span class="k">' + esc(f.status === 'error' ? 'cannot read' : f.status === 'reading' ? 'reading' : (f.note || KIND_LABEL[f.kind])) + '</span><button type="button" data-unattach="' + f.id + '" aria-label="Remove ' + esc(f.name) + '">' + CLIP + '</button></span>'; }).join('');
+  }
+  function addFiles(list) {
+    Array.prototype.slice.call(list || []).forEach(function (file) {
+      if (AS.files.length >= FILE_MAX) { bubble('note', 'Up to ' + FILE_MAX + ' files at a time.'); return; }
+      var it = { id: 'f' + Date.now() + Math.random().toString(36).slice(2, 6), name: file.name || 'pasted picture.png', kind: kindOf(file), status: 'reading', images: [], file: file };
+      if (file.size > 25 * 1024 * 1024) { it.status = 'error'; it.error = 'Files over 25 MB cannot be read here.'; }
+      AS.files.push(it); renderFiles();
+      if (it.status === 'error') return;
+      var p;
+      if (it.kind === 'sheet') p = Promise.resolve();
+      else if (it.kind === 'pdf') p = readPdf(file).then(function (r) { it.text = cap(r.text); it.images = r.images; it.note = r.pages + ' page' + (r.pages === 1 ? '' : 's') + (r.scanned ? ', scanned' : ''); });
+      else if (it.kind === 'office') p = readOffice(file).then(function (t) { it.text = cap(t); });
+      else if (it.kind === 'legacy') p = readLegacy(file).then(function (t) { it.text = cap(t); });
+      else if (it.kind === 'rtf') p = readRtf(file).then(function (t) { it.text = cap(t); });
+      else if (it.kind === 'html') p = readHtml(file).then(function (t) { it.text = cap(t); });
+      else if (it.kind === 'text') p = file.text().then(function (t) { it.text = cap(t); });
+      else if (it.kind === 'image') p = readImage(file).then(function (b) { it.images = [b]; });
+      else p = file.text().then(function (t) { if (/[\u0000-\u0008\u000e-\u001f]/.test(t.slice(0, 2000))) throw new Error('This kind of file cannot be read. Attach a spreadsheet, PDF, Word, PowerPoint, text file or picture.'); it.text = cap(t); });
+      p.then(function () { it.status = 'ready'; if (it.kind !== 'sheet' && it.kind !== 'image' && !it.text && !it.images.length) { it.status = 'error'; it.error = 'No text was found in this file.'; } renderFiles(); },
+        function (e) { it.status = 'error'; it.error = (e && e.message) || 'This file could not be read.'; renderFiles(); bubble('note', it.name + ': ' + it.error); });
+    });
+  }
+  $('asst-attach').addEventListener('click', function () { $('asst-file').click(); });
+  $('asst-file').addEventListener('change', function (e) { addFiles(e.target.files); e.target.value = ''; input.focus(); });
+  $('asst-files').addEventListener('click', function (e) { var b = e.target.closest('[data-unattach]'); if (!b) return; AS.files = AS.files.filter(function (f) { return f.id !== b.dataset.unattach; }); renderFiles(); });
+  ['dragenter', 'dragover'].forEach(function (t) { panel.addEventListener(t, function (e) { if (e.dataTransfer && Array.prototype.indexOf.call(e.dataTransfer.types || [], 'Files') >= 0) { e.preventDefault(); panel.classList.add('drag'); } }); });
+  ['dragleave', 'drop'].forEach(function (t) { panel.addEventListener(t, function (e) { if (t === 'dragleave' && panel.contains(e.relatedTarget)) return; panel.classList.remove('drag'); if (t === 'drop') { e.preventDefault(); addFiles(e.dataTransfer && e.dataTransfer.files); } }); });
+  input.addEventListener('paste', function (e) { var fs = e.clipboardData && e.clipboardData.files; if (fs && fs.length) { e.preventDefault(); addFiles(fs); } });
+  function blobB64(b) { return new Promise(function (res, rej) { var r = new FileReader(); r.onload = function () { res(String(r.result).split(',')[1]); }; r.onerror = rej; r.readAsDataURL(b); }); }
+
   function grow() { input.style.height = 'auto'; input.style.height = Math.min(140, input.scrollHeight + 2) + 'px'; }
   input.addEventListener('input', grow);
+  function sourceSnap() { return { src: st.src, origWb: st.origWb, srcName: st.srcName, sheetName: st.sheetName, grid: st.grid, rows: JSON.parse(JSON.stringify(ROWS)) }; }
+  function prepareAttachments(text) {
+    // Loads an attached spreadsheet (or a Google Sheets link) into the page, then gathers documents and pictures.
+    var files = AS.files.filter(function (f) { return f.status === 'ready'; }), notes = [], docs = [], blobs = [];
+    var sheets = files.filter(function (f) { return f.kind === 'sheet'; });
+    var step = Promise.resolve();
+    var link = !sheets.length && gsheetId(text);
+    if (sheets.length || link) {
+      var before = snapshot(), prev = sourceSnap(), name = sheets.length ? sheets[0].name : 'the Google Sheet';
+      step = (sheets.length ? sheets[0].file.arrayBuffer().then(function (buf) { return loadSheetBuffer(buf, sheets[0].name); }) : loadGoogleSheet(text)).then(function (r) {
+        if (r && r.ok) { record('Loaded ' + name + ' from the chat', before, { source: prev }); notes.push('[The person attached the spreadsheet "' + name + '". It is now loaded in the page; call get_overview to see it.]'); }
+        else notes.push('[The person tried to share the spreadsheet "' + name + '" but it could not be opened: ' + ((r && r.error) || 'unknown problem') + ' Tell them how to fix it.]');
+        if (sheets.length > 1) notes.push('[Only the first spreadsheet was loaded. Also attached and not loaded: ' + sheets.slice(1).map(function (f) { return f.name; }).join(', ') + '.]');
+      });
+    }
+    return step.then(function () {
+      var budget = AS.mode === 'api' ? 120000 : Math.max(20000, (AS.maxBytes || 200000) - 90000);
+      files.filter(function (f) { return f.kind !== 'sheet'; }).forEach(function (f) {
+        if (f.text) {
+          var t = f.text; if (t.length > budget) t = t.slice(0, Math.max(0, budget)) + '\n[... cut to fit]'; budget -= t.length;
+          docs.push('[Attached ' + KIND_LABEL[f.kind] + ' "' + f.name + '"' + (f.note ? ' (' + f.note + ')' : '') + '. Its text is between the markers.]\n<<<BEGIN ' + f.name + '\n' + t + '\nEND ' + f.name + '>>>');
+        }
+        f.images.forEach(function (b) { blobs.push(b); });
+        if (f.images.length) notes.push('[Attached ' + (f.kind === 'pdf' ? 'pictures of the pages of "' + f.name + '"' : 'picture "' + f.name + '"') + '.]');
+      });
+      var skipped = AS.files.filter(function (f) { return f.status !== 'ready'; });
+      if (skipped.length) notes.push('[These attachments could not be read: ' + skipped.map(function (f) { return f.name + ' (' + (f.error || 'still reading') + ')'; }).join('; ') + '.]');
+      if (blobs.length && !AS.imgMax) notes.push('[Pictures cannot be read in this view; tell the person to attach a PDF with text, a Word file or the spreadsheet instead.]');
+      if (blobs.length > (AS.imgMax || 0)) blobs = blobs.slice(0, AS.imgMax || 0);
+      return { text: [text].concat(notes).concat(docs).join('\n\n'), blobs: blobs, names: AS.files.map(function (f) { return f.name; }) };
+    });
+  }
   function send(text) {
-    text = String(text || '').trim(); if (!text || AS.busy) return;
+    text = String(text || '').trim();
+    if (AS.busy) return;
+    if (!text && !AS.files.length) return;
     if (AS.mode === undefined) { bubble('note', 'Still connecting to the assistant. Try again in a moment.'); return; }
     if (!AS.mode) { bubble('note', UNAVAILABLE); return; }
+    if (AS.files.some(function (f) { return f.status === 'reading'; })) { bubble('note', 'Still reading the attached files. Send again in a moment.'); return; }
+    if (!text) text = 'I have attached files. Please use them: load the data and apply any rules or instructions in them.';
     AS.busy = true; AS.ctl = new AbortController(); $('asst-send').hidden = true; $('asst-stop').hidden = false;
-    bubble('user', text); input.value = ''; grow();
-    var out = bubble('bot', ''); actEl = document.createElement('div'); actEl.className = 'act'; actEl.textContent = 'Thinking…'; out.appendChild(actEl);
-    var p = AS.mode === 'claude' || AS.mode === 'claude-text' ? runClaude(text, function (t) { out.textContent = t; out.appendChild(actEl); }) : runApi(text, function (t) { out.textContent = t; out.appendChild(actEl); });
+    var ub = bubble('user', text); input.value = ''; grow();
+    if (AS.files.length) { var at = document.createElement('span'); at.className = 'att'; at.textContent = 'Attached: ' + AS.files.map(function (f) { return f.name; }).join(', '); ub.appendChild(at); }
+    var out = bubble('bot', ''); actEl = document.createElement('div'); actEl.className = 'act'; actEl.textContent = AS.files.length ? 'Opening the attachments…' : 'Thinking…'; out.appendChild(actEl);
+    var histText = text;
+    var p = prepareAttachments(text).then(function (prep) {
+      AS.files = []; renderFiles();
+      histText = prep.text.length > 24000 ? prep.text.slice(0, 24000) + '\n[... attachment text cut from the history]' : prep.text;
+      if (prep.blobs.length) histText += '\n[' + prep.blobs.length + ' picture(s) were attached to this message]';
+      actEl.textContent = 'Thinking…';
+      if (AS.mode === 'claude' || AS.mode === 'claude-text') return runClaude(prep.text, function (t) { out.textContent = t; out.appendChild(actEl); }, prep.blobs);
+      return Promise.all(prep.blobs.map(blobB64)).then(function (b64) { return runApi(prep.text, function (t) { out.textContent = t; out.appendChild(actEl); }, b64); });
+    });
     p.then(function (final) {
-      out.textContent = final || 'Done.'; AS.turns.push({ role: 'user', content: text }, { role: 'assistant', content: final || 'Done.' });
+      out.textContent = final || 'Done.'; AS.turns.push({ role: 'user', content: histText }, { role: 'assistant', content: final || 'Done.' });
     }, function (e) {
       var c = e && e.code;
       if (c === 'cancelled' || (e && e.name === 'AbortError')) out.textContent = (e.text || out.textContent.replace(/\S*…$/, '')) + ' (stopped)';

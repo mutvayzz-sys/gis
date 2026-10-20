@@ -46,3 +46,9 @@ The assistant calls `/api/report`, which opens a GitHub issue labelled `assistan
 3. Redeploy. The deploy command (`npm run deploy:ci`) copies build secrets into the Worker.
 
 `/api/health` shows `"reports": true` once it is working. Reports are limited to 3 a minute per visitor, and assistant messages to 30 a minute.
+
+## Attachments and Google Sheets
+
+The assistant's paperclip takes spreadsheets (xlsx, xls, xlsb, ods, csv, Numbers), PDFs (scanned ones are sent as page pictures), Word (docx, old doc as rough text), PowerPoint (pptx), OpenDocument, RTF, HTML, text and pictures. Files are read in the visitor's browser; nothing is uploaded to this site or stored. A spreadsheet is loaded into the page; the text or pictures of the other files go to Claude with that message only.
+
+A Google Sheets link (shared as "Anyone with the link") can be pasted on the first step or in the chat. `/api/gsheet` fetches it as .xlsx and passes it straight to the browser without storing it.

@@ -320,6 +320,9 @@ table.edit tr.tot td { color: var(--fg-2); font-weight: 600; background: var(--s
 .asst-changes[open] summary::after { transform: rotate(-135deg); }
 .asst-changes ul { list-style: none; margin: 6px 0 0; padding: 0; display: grid; gap: 6px; }
 .asst-changes li { display: grid; grid-template-columns: 9px minmax(0, 1fr) auto; gap: 8px; align-items: baseline; font-size: var(--fs-sm); }
+.asst-inrow { display: flex; gap: 4px; align-items: end; min-width: 0; }
+.asst-inrow textarea { flex: 1; min-width: 0; }
+.asst { position: fixed; }
 .asst-form { display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: 8px; align-items: end; padding: 10px 12px calc(env(safe-area-inset-bottom, 0px) + 12px); border-top: 1px solid var(--border); }
 .asst-form textarea { min-height: 42px; max-height: 140px; resize: none; font-family: var(--font); font-size: 16px; padding: 10px 12px; }
 .asst-where { grid-column: 1 / -1; font-size: 11px; color: var(--fg-3); }
@@ -345,6 +348,25 @@ body.asst-open .asst-fab { display: none; }
 .lockgrid label { display: inline-flex; gap: 6px; align-items: center; padding: 6px 10px; border-radius: 8px; border: 1px solid var(--border); font-size: var(--fs-sm); cursor: pointer; transition: background-color 150ms ease; }
 .lockgrid label:hover { background: var(--muted); }
 .lockgrid label:has(input:checked) { background: var(--fg); color: var(--bg); border-color: var(--fg); }
+/* google sheets link */
+.gs-row { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; justify-content: center; margin: var(--s3) auto 0; max-width: 560px; width: 100%; }
+.gs-row label { flex-basis: 100%; text-align: center; }
+.gs-row input { flex: 1 1 240px; min-width: 0; min-height: 38px; }
+/* assistant attachments */
+.asst-attach { appearance: none; border: 0; background: transparent; color: var(--fg-2); width: 40px; height: 42px; border-radius: 8px; display: grid; place-items: center; cursor: pointer; transition: background-color 150ms ease, color 150ms ease; }
+.asst-attach:hover { background: var(--muted); color: var(--fg); } .asst-attach:active { transform: scale(0.97); }
+.asst-attach svg { width: 20px; height: 20px; }
+.asst-files { grid-column: 1 / -1; display: flex; flex-wrap: wrap; gap: 6px; }
+.asst-files:empty { display: none; }
+.fchip { display: inline-flex; align-items: center; gap: 6px; max-width: 100%; padding: 4px 4px 4px 10px; border-radius: 8px; background: var(--muted); font-size: var(--fs-cap); }
+.fchip .nm { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; max-width: 200px; }
+.fchip .k { color: var(--fg-2); }
+.fchip.busy .k::after { content: "…"; }
+.fchip.bad { color: var(--bad); }
+.fchip button { appearance: none; border: 0; background: transparent; color: var(--fg-2); width: 24px; height: 24px; border-radius: 6px; display: grid; place-items: center; cursor: pointer; }
+.fchip button:hover { background: var(--muted-hover); color: var(--fg); } .fchip button svg { width: 14px; height: 14px; }
+.asst.drag::after { content: "Drop files to attach"; position: absolute; inset: 0; display: grid; place-items: center; background: color-mix(in srgb, var(--bg) 88%, transparent); border: 2px dashed var(--primary); border-radius: inherit; font-weight: 600; color: var(--primary); pointer-events: none; }
+.bub .att { display: block; font-size: var(--fs-cap); opacity: 0.85; margin-top: 4px; }
 /* row entry */
 .rows-tbl { width: 100%; border-collapse: separate; border-spacing: 0; font-size: var(--fs-sm); }
 .rows-tbl th { text-align: left; font-weight: 600; font-size: var(--fs-cap); color: var(--fg-2); padding: 0 6px 6px; white-space: nowrap; }
@@ -403,9 +425,10 @@ body.asst-open .asst-fab { display: none; }
       </svg>
       <h3>Drop your Excel sheet here</h3>
       <div class="row" style="justify-content:center">
-        <label class="btn primary big" for="file-in">Choose a File<input class="vh" id="file-in" type="file" accept=".xlsx,.xls,.csv,.tsv,.txt"></label>
+        <label class="btn primary big" for="file-in">Choose a File<input class="vh" id="file-in" type="file" accept=".xlsx,.xlsm,.xls,.xlsb,.ods,.fods,.csv,.tsv,.txt,.numbers"></label>
         <button class="btn big" type="button" id="open-rows" aria-controls="rows-card" aria-expanded="false">Enter Rows</button>
       </div>
+      <div class="gs-row"><label for="gs-link" class="muted small">Google Sheets link</label><input type="url" id="gs-link" inputmode="url" autocomplete="off" spellcheck="false" placeholder="https://docs.google.com/spreadsheets/d/…"><button class="btn" type="button" id="gs-go">Open</button></div>
       <p class="muted small">Need the layout? <button class="btn quiet" type="button" data-dl="template" style="min-height:30px;padding:0 8px">Download the blank template</button></p>
     </div>
     <div id="sheet-pick" class="card soft" hidden><h3>Which sheet?</h3><div class="sheets-pick" id="sheet-list"></div></div>
@@ -580,12 +603,12 @@ body.asst-open .asst-fab { display: none; }
 <section class="asst" id="asst" data-open="false" aria-hidden="true" role="dialog" aria-modal="false" aria-labelledby="asst-h">
   <div class="asst-head"><h2 id="asst-h">Assistant<span class="sub">Fixes sheets and changes anything on this page</span></h2><button type="button" class="asst-x" id="asst-close" aria-label="Close the assistant"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" aria-hidden="true"><path d="M6 6l12 12M18 6L6 18"/></svg></button></div>
   <div class="asst-body" id="asst-body">
-    <div class="asst-hello" id="asst-hello"><b>What do you need?</b>Tell me what's wrong or what to change. I make the change on the page and list it below so you can undo it.</div>
+    <div class="asst-hello" id="asst-hello"><b>What do you need?</b>Tell me what to change, or attach your sheet and the rules (Excel, Google Sheets, PDF, Word, slides or a photo). I make the changes on the page and list them so you can undo any.</div>
     <div class="asst-sugg" id="asst-sugg"></div>
     <div class="asst-log" id="asst-log" aria-live="polite"></div>
   </div>
   <details class="asst-changes" id="asst-changes" hidden><summary><span class="dot sim" aria-hidden="true"></span><span id="asst-changes-t">What it changed</span></summary><ul id="asst-changes-list"></ul></details>
-  <form class="asst-form" id="asst-form"><label for="asst-in" class="sr">Message</label><textarea id="asst-in" rows="1" placeholder="Ask or describe a change…" autocomplete="off"></textarea><span><button type="button" class="btn" id="asst-stop" hidden>Stop</button><button type="submit" class="btn primary" id="asst-send">Send</button></span><p class="asst-where" id="asst-where"></p></form>
+  <form class="asst-form" id="asst-form"><div class="asst-files" id="asst-files" aria-live="polite"></div><div class="asst-inrow"><button type="button" class="asst-attach" id="asst-attach" aria-label="Attach files: spreadsheets, PDF, Word, PowerPoint, text or pictures" title="Attach a spreadsheet, PDF, Word, PowerPoint, text file or picture"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M20 11.5 12.4 19a5 5 0 0 1-7.1-7.1l7.9-7.8a3.3 3.3 0 0 1 4.7 4.7l-7.9 7.8a1.7 1.7 0 0 1-2.4-2.4l7.2-7.1"/></svg></button><input type="file" id="asst-file" class="vh" multiple accept=".xlsx,.xlsm,.xls,.xlsb,.ods,.fods,.csv,.tsv,.numbers,.pdf,.docx,.doc,.odt,.rtf,.pptx,.odp,.txt,.md,.html,.htm,.json,.png,.jpg,.jpeg,.webp,.gif,.heic,.heif,image/*"><label for="asst-in" class="sr">Message</label><textarea id="asst-in" rows="1" placeholder="Ask, or attach a file…" autocomplete="off"></textarea></div><span><button type="button" class="btn" id="asst-stop" hidden>Stop</button><button type="submit" class="btn primary" id="asst-send">Send</button></span><p class="asst-where" id="asst-where"></p></form>
 </section>
 
 <footer class="wrap foot"><p>Everything is calculated in your browser. No sheet data is stored in this page. The assistant sends what it needs to Claude only when you ask it something.</p></footer>

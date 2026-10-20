@@ -5,7 +5,7 @@
 import PROMPT from '../src/prompt.txt';
 
 const TOOLS = new Set(['get_overview', 'read_cells', 'choose_sheet', 'set_header_row', 'set_column', 'set_rules', 'edit_number', 'set_cell', 'choose_option', 'go_to_step', 'set_cells', 'enter_rows', 'set_phase', 'add_rule', 'remove_rule', 'set_simulation_limits', 'set_simulated_numbers', 'report_gap']);
-const MAX_BODY = 400 * 1024;
+const MAX_BODY = 4 * 1024 * 1024; // room for a few attached pictures
 const REPORT_REPO = 'mutvayzz-sys/gis';
 
 async function allowed(limiter, key) {
@@ -56,6 +56,21 @@ export default {
       if (!res.ok) return json({ error: 'The report could not be sent (' + res.status + ').' }, 502);
       const issue = await res.json().catch(() => ({}));
       return json({ ok: true, number: issue.number || null });
+    }
+
+    if (url.pathname === '/api/gsheet') {
+      // Fetches a Google Sheet shared as "Anyone with the link" as .xlsx for the page. Not stored.
+      if (request.method !== 'GET') return json({ error: 'Use GET.' }, 405);
+      if (!sameSite(request, url)) return json({ error: 'Requests are only accepted from this site.' }, 403);
+      const id = url.searchParams.get('id') || '';
+      if (!/^[A-Za-z0-9_-]{20,100}$/.test(id)) return json({ error: 'That is not a Google Sheets link.' }, 400);
+      if (!(await allowed(env.CHAT_LIMIT, request.headers.get('cf-connecting-ip') || 'unknown'))) return json({ error: 'Too many requests right now.' }, 429);
+      const res = await fetch('https://docs.google.com/spreadsheets/d/' + id + '/export?format=xlsx', { redirect: 'follow' });
+      const type = res.headers.get('content-type') || '';
+      if (!res.ok || /text\/html/.test(type)) return json({ error: 'private' }, res.status === 404 ? 404 : 403);
+      const buf = await res.arrayBuffer();
+      if (buf.byteLength > 15 * 1024 * 1024) return json({ error: 'That sheet is too large.' }, 413);
+      return new Response(buf, { headers: { 'content-type': 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet', 'cache-control': 'no-store' } });
     }
 
     if (url.pathname === '/api/chat') {

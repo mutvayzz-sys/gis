@@ -60,29 +60,57 @@
     Array.prototype.forEach.call(document.querySelectorAll('[data-sheet]'), function (b) { b.classList.toggle('primary', b.dataset.sheet === name); });
     recompute();
   }
+  var SHEET_EXT = /^(xlsx|xlsm|xls|xlsb|ods|fods|csv|tsv|txt|numbers)$/;
+  // Loads spreadsheet bytes into the page. Resolves {ok, error}.
+  function loadSheetBuffer(buf, name, ext) {
+    ext = (ext || (name.split('.').pop() || '')).toLowerCase();
+    return new Promise(function (resolve) {
+      function fail(t) { msg('msg1', t, 'bad'); resolve({ ok: false, error: t }); }
+      if (buf.byteLength < 200 && (ext === 'xlsx' || ext === 'xlsm')) return fail('This file is almost empty (' + buf.byteLength + ' bytes), so it is not a real spreadsheet. It was probably a failed download. Download it again and check it opens in Excel.');
+      if (ext === 'xlsx' || ext === 'xlsm') {
+        if (typeof ExcelJS === 'undefined') return fail('The spreadsheet reader did not load. Reload the page, or enter the rows instead.');
+        var wb = new ExcelJS.Workbook(), orig = new ExcelJS.Workbook();
+        Promise.all([wb.xlsx.load(buf.slice(0)), orig.xlsx.load(buf.slice(0))]).then(function () { useWorkbook(wb, name, orig); resolve({ ok: !!st.src }); }, function () { fail('This does not look like a working Excel file. Open it in Excel, save a fresh copy, and try again.'); });
+        return;
+      }
+      try {
+        if (typeof XLSX === 'undefined') throw new Error('reader not loaded');
+        var x = /^(csv|tsv|txt)$/.test(ext) ? XLSX.read(new TextDecoder().decode(new Uint8Array(buf)), { type: 'string' }) : XLSX.read(new Uint8Array(buf), { type: 'array' });
+        var sheets = x.SheetNames.map(function (n) { return { name: n, aoa: XLSX.utils.sheet_to_json(x.Sheets[n], { header: 1, raw: true, defval: null }) }; });
+        useWorkbook(aoaToWorkbook(sheets), name, aoaToWorkbook(sheets));
+        resolve({ ok: !!st.src });
+      } catch (err) { fail(ext === 'numbers' ? 'That Numbers file could not be read. In Numbers, choose File, Export To, Excel, and use that file.' : 'That file could not be read. Try saving it as .xlsx, or enter the rows.'); }
+    });
+  }
   function readFile(f) {
     if (!f) return;
     var ext = (f.name.split('.').pop() || '').toLowerCase();
-    var rd = new FileReader();
-    rd.onerror = function () { msg('msg1', 'That file could not be read. If it came from a download, download it again and check it opens in Excel.', 'bad'); };
-    rd.onload = function () {
-      var buf = rd.result;
-      if (buf.byteLength < 200 && ext === 'xlsx') { msg('msg1', 'This file is almost empty (' + buf.byteLength + ' bytes), so it is not a real spreadsheet. It was probably a failed download. Download it again and check it opens in Excel.', 'bad'); return; }
-      if (ext === 'xlsx' || ext === 'xlsm') {
-        if (typeof ExcelJS === 'undefined') { msg('msg1', 'The spreadsheet reader did not load. Reload the page, or paste the rows instead.', 'bad'); return; }
-        var wb = new ExcelJS.Workbook(), orig = new ExcelJS.Workbook();
-        Promise.all([wb.xlsx.load(buf.slice(0)), orig.xlsx.load(buf.slice(0))]).then(function () { useWorkbook(wb, f.name, orig); }, function () { msg('msg1', 'This does not look like a working Excel file. Open it in Excel, save a fresh copy, and try again.', 'bad'); });
-      } else {
-        try {
-          if (typeof XLSX === 'undefined') throw new Error('reader not loaded');
-          var x = /^(csv|tsv|txt)$/.test(ext) ? XLSX.read(new TextDecoder().decode(new Uint8Array(buf)), { type: 'string' }) : XLSX.read(new Uint8Array(buf), { type: 'array' });
-          var sheets = x.SheetNames.map(function (n) { return { name: n, aoa: XLSX.utils.sheet_to_json(x.Sheets[n], { header: 1, raw: true, defval: null }) }; });
-          useWorkbook(aoaToWorkbook(sheets), f.name, aoaToWorkbook(sheets));
-        } catch (err) { msg('msg1', 'That file could not be read. Try saving it as .xlsx, or paste the rows.', 'bad'); }
-      }
-    };
-    rd.readAsArrayBuffer(f);
+    if (!SHEET_EXT.test(ext)) { msg('msg1', 'That is not a spreadsheet. For a PDF, Word file or picture of a table, attach it to the assistant instead and it will read it.', 'bad'); return; }
+    f.arrayBuffer().then(function (buf) { loadSheetBuffer(buf, f.name, ext); }, function () { msg('msg1', 'That file could not be read. If it came from a download, download it again and check it opens in Excel.', 'bad'); });
   }
+  // Google Sheets: a link shared as "Anyone with the link" can be read.
+  function gsheetId(text) { var m = /docs\.google\.com\/spreadsheets\/d\/([A-Za-z0-9_-]{20,})/.exec(String(text || '')); return m ? m[1] : null; }
+  function loadGoogleSheet(link) {
+    var id = gsheetId(link);
+    if (!id) return Promise.resolve({ ok: false, error: 'That is not a Google Sheets link.' });
+    var viaSite = !(window.claude && typeof window.claude.use === 'function');
+    var url = viaSite ? '/api/gsheet?id=' + encodeURIComponent(id) : 'https://docs.google.com/spreadsheets/d/' + id + '/export?format=xlsx';
+    return fetch(url).then(function (r) {
+      if (!r.ok) throw new Error(r.status === 404 || r.status === 403 || r.status === 401 ? 'private' : 'http ' + r.status);
+      return r.arrayBuffer();
+    }).then(function (buf) {
+      var head = new Uint8Array(buf.slice(0, 4));
+      if (!(head[0] === 0x50 && head[1] === 0x4b)) throw new Error('private');
+      return loadSheetBuffer(buf, 'Google Sheet.xlsx', 'xlsx');
+    }).catch(function (e) {
+      var t = e && e.message === 'private'
+        ? 'That Google Sheet is not shared publicly, so it cannot be opened from here. In Google Sheets choose Share, General access, Anyone with the link. Or choose File, Download, Microsoft Excel and load that file.'
+        : 'The Google Sheet could not be opened from here. In Google Sheets choose File, Download, Microsoft Excel (.xlsx) and load that file instead.';
+      msg('msg1', t, 'bad'); return { ok: false, error: t };
+    });
+  }
+  $('gs-go').addEventListener('click', function () { var v = $('gs-link').value.trim(); if (!v) { $('gs-link').focus(); return; } loadGoogleSheet(v); });
+  $('gs-link').addEventListener('keydown', function (e) { if (e.key === 'Enter') { e.preventDefault(); $('gs-go').click(); } });
   $('file-in').addEventListener('change', function (e) { readFile(e.target.files && e.target.files[0]); e.target.value = ''; });
   var drop = $('drop');
   ['dragenter', 'dragover'].forEach(function (t) { drop.addEventListener(t, function (e) { e.preventDefault(); drop.classList.add('over'); }); });

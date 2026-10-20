@@ -344,16 +344,17 @@
     }).then(function (pdf) {
       var n = Math.min(pdf.numPages, 40), pages = [];
       var chain = Promise.resolve();
-      for (var i = 1; i <= n; i++) (function (k) { chain = chain.then(function () { return pdf.getPage(k).then(function (pg) { return pg.getTextContent().then(function (tc) { pages.push({ k: k, page: pg, text: layoutPdf(tc.items) }); }); }); }); })(i);
+      var OPS = window.pdfjsLib.OPS || {}, IMG_OPS = [OPS.paintImageXObject, OPS.paintInlineImageXObject, OPS.paintImageMaskXObject, OPS.paintJpegXObject].filter(function (x) { return x != null; });
+      for (var i = 1; i <= n; i++) (function (k) { chain = chain.then(function () { return pdf.getPage(k).then(function (pg) { return Promise.all([pg.getTextContent(), pg.getOperatorList().catch(function () { return { fnArray: [] }; })]).then(function (r) { var hasImg = r[1].fnArray.some(function (f) { return IMG_OPS.indexOf(f) >= 0; }); pages.push({ k: k, page: pg, text: layoutPdf(r[0].items), img: hasImg }); }); }); }); })(i);
       return chain.then(function () {
-        var all = pages.map(function (p) { return (pdf.numPages > 1 ? 'Page ' + p.k + ':\n' : '') + p.text; }).join('\n\n');
-        var chars = pages.reduce(function (a, p) { return a + p.text.replace(/\s/g, '').length; }, 0);
-        var res = { text: all + (pdf.numPages > n ? '\n[only the first ' + n + ' of ' + pdf.numPages + ' pages were read]' : ''), pages: pdf.numPages, images: [] };
-        if (chars > 40 * Math.min(n, 3)) return res;
-        // Looks scanned: send pictures of the first pages instead.
+        var all = pages.map(function (p) { return (pdf.numPages > 1 ? 'Page ' + p.k + ':\n' : '') + p.text + (p.img ? '\n[this page also has pictures, such as a table or chart; a picture of the page is attached]' : ''); }).join('\n\n');
+        var res = { text: all + (pdf.numPages > n ? '\n[only the first ' + n + ' of ' + pdf.numPages + ' pages were read]' : ''), pages: pdf.numPages, images: [], picPages: [] };
+        // Pages with little text (scanned) or with pictures (tables pasted as images) are also sent as pictures.
+        var scanned = pages.every(function (p) { return p.text.replace(/\s/g, '').length < 40; });
+        var want = pages.filter(function (p) { return p.img || (scanned && p.text.replace(/\s/g, '').length < 40); }).slice(0, 4);
         var pics = Promise.resolve();
-        pages.slice(0, 3).forEach(function (p) { pics = pics.then(function () { var vp0 = p.page.getViewport({ scale: 1 }), sc = Math.min(2, 1500 / Math.max(vp0.width, vp0.height)), vp = p.page.getViewport({ scale: sc }); var cv = document.createElement('canvas'); cv.width = Math.round(vp.width); cv.height = Math.round(vp.height); var ctx = cv.getContext('2d'); ctx.fillStyle = '#fff'; ctx.fillRect(0, 0, cv.width, cv.height); return p.page.render({ canvasContext: ctx, viewport: vp }).promise.then(function () { return canvasBlob(cv); }).then(function (b) { res.images.push(b); }); }); });
-        return pics.then(function () { res.scanned = true; return res; });
+        want.forEach(function (p) { pics = pics.then(function () { var vp0 = p.page.getViewport({ scale: 1 }), sc = Math.min(2.5, 1568 / Math.max(vp0.width, vp0.height)), vp = p.page.getViewport({ scale: sc }); var cv = document.createElement('canvas'); cv.width = Math.round(vp.width); cv.height = Math.round(vp.height); var ctx = cv.getContext('2d'); ctx.fillStyle = '#fff'; ctx.fillRect(0, 0, cv.width, cv.height); return p.page.render({ canvasContext: ctx, viewport: vp }).promise.then(function () { return canvasBlob(cv); }).then(function (b) { res.images.push(b); res.picPages.push(p.k); }); }); });
+        return pics.then(function () { res.scanned = scanned; return res; });
       });
     });
   }
@@ -411,7 +412,7 @@
       if (it.status === 'error') return;
       var p;
       if (it.kind === 'sheet') p = Promise.resolve();
-      else if (it.kind === 'pdf') p = readPdf(file).then(function (r) { it.text = cap(r.text); it.images = r.images; it.note = r.pages + ' page' + (r.pages === 1 ? '' : 's') + (r.scanned ? ', scanned' : ''); });
+      else if (it.kind === 'pdf') p = readPdf(file).then(function (r) { it.text = cap(r.text); it.images = r.images; it.picPages = r.picPages; it.scanned = r.scanned; it.note = r.pages + ' page' + (r.pages === 1 ? '' : 's') + (r.scanned ? ', scanned' : r.images.length ? ', with pictures' : ''); });
       else if (it.kind === 'office') p = readOffice(file).then(function (t) { it.text = cap(t); });
       else if (it.kind === 'legacy') p = readLegacy(file).then(function (t) { it.text = cap(t); });
       else if (it.kind === 'rtf') p = readRtf(file).then(function (t) { it.text = cap(t); });
@@ -456,7 +457,7 @@
           docs.push('[Attached ' + KIND_LABEL[f.kind] + ' "' + f.name + '"' + (f.note ? ' (' + f.note + ')' : '') + '. Its text is between the markers.]\n<<<BEGIN ' + f.name + '\n' + t + '\nEND ' + f.name + '>>>');
         }
         f.images.forEach(function (b) { blobs.push(b); });
-        if (f.images.length) notes.push('[Attached ' + (f.kind === 'pdf' ? 'pictures of the pages of "' + f.name + '"' : 'picture "' + f.name + '"') + '.]');
+        if (f.images.length) notes.push('[Attached ' + (f.kind === 'pdf' ? 'pictures of page' + (f.picPages && f.picPages.length > 1 ? 's ' : ' ') + (f.picPages || []).join(', ') + ' of "' + f.name + '", because ' + (f.scanned ? 'it is scanned' : 'those pages contain pictures such as tables') + '. Read the pictures as part of the document.' : 'picture "' + f.name + '"') + ']');
       });
       var skipped = AS.files.filter(function (f) { return f.status !== 'ready'; });
       if (skipped.length) notes.push('[These attachments could not be read: ' + skipped.map(function (f) { return f.name + ' (' + (f.error || 'still reading') + ')'; }).join('; ') + '.]');

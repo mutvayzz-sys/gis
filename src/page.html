@@ -341,7 +341,7 @@ table.edit tr.tot td { color: var(--fg-2); font-weight: 600; background: var(--s
   <div class="asst-banner" id="asst-banner" hidden><span class="dot sim" aria-hidden="true"></span><span id="asst-banner-t"></span><button type="button" class="btn quiet" id="asst-banner-open">See Changes</button></div>
   <!-- STEP 1 -->
   <section class="step" id="step-1" data-step="1" aria-labelledby="h1s">
-    <div class="step-head"><span class="eyebrow">Step 1 of 6</span><h2 id="h1s">Load your sheet</h2><p>Excel, CSV, or rows copied from Excel. The page finds the table on its own.</p></div>
+    <div class="step-head"><h2 id="h1s">Load your sheet</h2><p>Excel, CSV, or rows copied from Excel. The page finds the table on its own.</p></div>
     <div class="drop" id="drop">
       <svg class="drop-art" viewBox="0 0 120 84" aria-hidden="true">
         <rect x="18" y="6" width="84" height="66" rx="7" fill="var(--bg)" stroke="var(--fg-3)" stroke-width="1.5"/>
@@ -378,7 +378,7 @@ table.edit tr.tot td { color: var(--fg-2); font-weight: 600; background: var(--s
 
   <!-- STEP 2 -->
   <section class="step" id="step-2" data-step="2" aria-labelledby="h2s" hidden>
-    <div class="step-head"><span class="eyebrow">Step 2 of 6</span><h2 id="h2s">Check what was found</h2><p>Make sure each column is read the right way. Fix any number if needed.</p></div>
+    <div class="step-head"><h2 id="h2s">Check what was found</h2><p>Make sure each column is read the right way. Fix any number if needed.</p></div>
     <div class="found" id="found"></div>
     <div class="flag" id="nf-card" hidden><span class="dot warn" aria-hidden="true"></span><span style="display:grid;gap:10px"><span><strong>The table wasn't recognised.</strong> Tell the page which row has the headings and which column is which, or let the assistant do it.</span>
       <span class="row"><label class="field" style="grid-template-columns:auto auto;align-items:center"><span>Headings are in row</span><input type="number" id="hdr-row" min="1" step="1" inputmode="numeric"></label><button type="button" class="btn primary" id="nf-ask" hidden>Ask the Assistant to Fix It</button></span></span></div>
@@ -397,7 +397,7 @@ table.edit tr.tot td { color: var(--fg-2); font-weight: 600; background: var(--s
 
   <!-- STEP 3 -->
   <section class="step" id="step-3" data-step="3" aria-labelledby="h3s" hidden>
-    <div class="step-head"><span class="eyebrow">Step 3 of 6</span><h2 id="h3s">Set the rules</h2><p>Already filled in from the brief. Change any number to match your criteria.</p></div>
+    <div class="step-head"><h2 id="h3s">Set the rules</h2><p>Already filled in from the brief. Change any number to match your criteria.</p></div>
     <div class="card">
       <h3>How a grade is judged</h3>
       <div class="ladder">
@@ -461,7 +461,7 @@ table.edit tr.tot td { color: var(--fg-2); font-weight: 600; background: var(--s
 
   <!-- STEP 4 -->
   <section class="step" id="step-4" data-step="4" aria-labelledby="h4s" hidden>
-    <div class="step-head"><span class="eyebrow">Step 4 of 6</span><h2 id="h4s">The actual results</h2><p>Real numbers, with any adding-up mistakes fixed. Nothing here is simulated.</p></div>
+    <div class="step-head"><h2 id="h4s">The actual results</h2><p>Real numbers, with any adding-up mistakes fixed. Nothing here is simulated.</p></div>
     <div class="kpis" id="kpis"></div>
     <div class="card"><h3>Every judgement at a glance</h3><div class="tiles-wrap" id="tiles-actual"></div></div>
     <div class="card"><h3>Grade by grade</h3><p class="muted small">The bar is the share making expected or better progress. The black line is the Acceptable mark.</p><div id="bars"></div></div>
@@ -474,7 +474,7 @@ table.edit tr.tot td { color: var(--fg-2); font-weight: 600; background: var(--s
 
   <!-- STEP 5 -->
   <section class="step" id="step-5" data-step="5" aria-labelledby="h5s" hidden>
-    <div class="step-head"><span class="eyebrow">Step 5 of 6</span><h2 id="h5s">The simulated scenario</h2><p class="notice"><span class="dot" aria-hidden="true"></span>For internal planning only. Not actual results.</p></div>
+    <div class="step-head"><h2 id="h5s">The simulated scenario</h2><p class="notice"><span class="dot" aria-hidden="true"></span>For internal planning only. Not actual results.</p></div>
     <div id="sim-status"></div>
     <div id="sim-body">
       <div class="card"><h3>Choose an option</h3><div class="opts" id="opts"></div><p class="muted small" id="opts-note"></p></div>
@@ -492,7 +492,7 @@ table.edit tr.tot td { color: var(--fg-2); font-weight: 600; background: var(--s
 
   <!-- STEP 6 -->
   <section class="step" id="step-6" data-step="6" aria-labelledby="h6s" hidden>
-    <div class="step-head"><span class="eyebrow">Step 6 of 6</span><h2 id="h6s">Download the workbook</h2><p>One Excel file with everything, built in this browser. Percentages and judgements are live formulas.</p></div>
+    <div class="step-head"><h2 id="h6s">Download the workbook</h2><p>One Excel file with everything, built in this browser. Percentages and judgements are live formulas.</p></div>
     <ul class="wb-list" id="wb-list"></ul>
     <div class="flag" id="dl-flag" hidden><span class="dot warn" aria-hidden="true"></span><span id="dl-flag-t"></span></div>
     <div class="row"><button class="btn primary big" type="button" data-dl="workbook">Download Excel Workbook</button></div>

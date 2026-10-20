@@ -5,6 +5,7 @@
   "scripts": {
     "build": "node scripts/build.js",
     "dev": "node scripts/build.js && npx wrangler dev",
-    "deploy": "node scripts/build.js && npx wrangler deploy"
+    "deploy": "node scripts/build.js && npx wrangler deploy",
+    "deploy:ci": "npx wrangler deploy && node scripts/put-secret.js"
   }
 }

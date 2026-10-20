@@ -585,7 +585,7 @@ body.asst-open .asst-fab { display: none; }
   </section>
 </main>
 
-<button type="button" class="asst-fab" id="asst-open" aria-controls="asst" aria-expanded="false" hidden><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M20 12.5c0 3.6-3.6 6.5-8 6.5-1 0-2-.15-2.9-.43L5 20l1.2-3.3C4.8 15.6 4 14.1 4 12.5 4 8.9 7.6 6 12 6s8 2.9 8 6.5Z"/></svg><span>Ask the Assistant</span><span class="badge" id="asst-badge" hidden></span></button>
+<button type="button" class="asst-fab" id="asst-open" aria-controls="asst" aria-expanded="false"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M20 12.5c0 3.6-3.6 6.5-8 6.5-1 0-2-.15-2.9-.43L5 20l1.2-3.3C4.8 15.6 4 14.1 4 12.5 4 8.9 7.6 6 12 6s8 2.9 8 6.5Z"/></svg><span>Ask the Assistant</span><span class="badge" id="asst-badge" hidden></span></button>
 <section class="asst" id="asst" data-open="false" aria-hidden="true" role="dialog" aria-modal="false" aria-labelledby="asst-h">
   <div class="asst-head"><h2 id="asst-h">Assistant<span class="sub">Fixes sheets and changes anything on this page</span></h2><button type="button" class="asst-x" id="asst-close" aria-label="Close the assistant"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" aria-hidden="true"><path d="M6 6l12 12M18 6L6 18"/></svg></button></div>
   <div class="asst-body" id="asst-body">
@@ -2295,18 +2295,30 @@ var Grid = (function () {
   ];
 
   /* ---------- transports ---------- */
+  var PRIORITY = ['get_overview', 'read_cells', 'set_column', 'set_header_row', 'set_cells', 'enter_rows', 'set_rules', 'add_rule', 'set_simulation_limits', 'set_simulated_numbers', 'choose_option', 'go_to_step', 'edit_number', 'set_phase', 'remove_rule', 'choose_sheet', 'set_cell'];
   function detect() {
     if (window.claude && typeof window.claude.use === 'function') {
       return window.claude.use('sample').then(function (s) {
         if (!s) return null;
-        return (s.limits ? s.limits().catch(function () { return null; }) : Promise.resolve(null)).then(function (l) { if (l && l.tools) { AS.sample = s; return 'claude'; } return null; });
+        AS.sample = s;
+        return (s.limits ? s.limits().catch(function () { return null; }) : Promise.resolve(null)).then(function (l) {
+          if (l && l.tools) { AS.maxTools = l.tools.maxCount || TOOLS.length; return 'claude'; }
+          return 'claude-text';
+        });
       }).catch(function () { return null; });
     }
     return fetch('/api/health', { method: 'GET' }).then(function (r) { return r.ok ? r.json() : null; }).then(function (j) { return j && j.ok ? 'api' : null; }).catch(function () { return null; });
   }
+  function pageTools() {
+    var max = Math.max(1, AS.maxTools || TOOLS.length);
+    var list = TOOLS.slice().sort(function (a, b) { var x = PRIORITY.indexOf(a.name), y = PRIORITY.indexOf(b.name); return (x < 0 ? 99 : x) - (y < 0 ? 99 : y); }).slice(0, max);
+    return list.map(function (t) { return { name: t.name, description: t.description, inputSchema: t.inputSchema, execute: function (inp) { activity(t.name, inp); return t.execute(inp || {}); } }; });
+  }
   function runClaude(userText, onText) {
     var turns = [{ role: 'user', content: INSTRUCTIONS + '\n\nCURRENT STATE (JSON):\n' + JSON.stringify(overview()).slice(0, 60000) }].concat(AS.turns.slice(-12)).concat([{ role: 'user', content: userText }]);
-    return AS.sample(turns, { tools: TOOLS.map(function (t) { return { name: t.name, description: t.description, inputSchema: t.inputSchema, execute: function (inp) { activity(t.name, inp); return t.execute(inp || {}); } }; }), cache: false, signal: AS.ctl.signal, onText: function (u) { onText(u.text); } })
+    var noTools = AS.mode === 'claude-text';
+    if (noTools) turns[0].content += '\n\nIN THIS VIEW YOU HAVE NO TOOLS: you can explain and advise, but you cannot change anything on the page. If they ask for a change, tell them exactly where on the page to make it (step and field).';
+    return AS.sample(turns, noTools ? { cache: false, signal: AS.ctl.signal, onText: function (u) { onText(u.text); } } : { tools: pageTools(), cache: false, signal: AS.ctl.signal, onText: function (u) { onText(u.text); } })
       .then(function (r) { return r.text; });
   }
   function runApi(userText, onText) {
@@ -2389,11 +2401,12 @@ var Grid = (function () {
   input.addEventListener('input', grow);
   function send(text) {
     text = String(text || '').trim(); if (!text || AS.busy) return;
-    if (!AS.mode) { bubble('note', 'The assistant is not available here.'); return; }
+    if (AS.mode === undefined) { bubble('note', 'Still connecting to the assistant. Try again in a moment.'); return; }
+    if (!AS.mode) { bubble('note', UNAVAILABLE); return; }
     AS.busy = true; AS.ctl = new AbortController(); $('asst-send').hidden = true; $('asst-stop').hidden = false;
     bubble('user', text); input.value = ''; grow();
     var out = bubble('bot', ''); actEl = document.createElement('div'); actEl.className = 'act'; actEl.textContent = 'Thinking…'; out.appendChild(actEl);
-    var p = AS.mode === 'claude' ? runClaude(text, function (t) { out.textContent = t; out.appendChild(actEl); }) : runApi(text, function (t) { out.textContent = t; out.appendChild(actEl); });
+    var p = AS.mode === 'claude' || AS.mode === 'claude-text' ? runClaude(text, function (t) { out.textContent = t; out.appendChild(actEl); }) : runApi(text, function (t) { out.textContent = t; out.appendChild(actEl); });
     p.then(function (final) {
       out.textContent = final || 'Done.'; AS.turns.push({ role: 'user', content: text }, { role: 'assistant', content: final || 'Done.' });
     }, function (e) {
@@ -2413,10 +2426,16 @@ var Grid = (function () {
     var b = e.target.closest('[data-q],[data-fill]'); if (!b) return;
     if (b.dataset.q) send(b.dataset.q); else { input.value = b.dataset.fill; grow(); input.focus(); input.setSelectionRange(input.value.length, input.value.length); }
   });
+  var UNAVAILABLE = window.claude ? 'The assistant cannot reach Claude in this view. Open this page in Claude on a computer (web or desktop app) and allow it to use Claude when asked. Everything else on the page works here.' : 'The assistant is not switched on for this site yet. Everything else on the page works.';
+  AS.mode = undefined;
+  fab.hidden = false;
+  $('asst-where').textContent = 'Connecting…';
   detect().then(function (m) {
     AS.mode = m;
-    fab.hidden = !m;
-    $('asst-where').textContent = m === 'claude' ? 'Uses Claude on your own account. What it needs from your sheet is sent only when you ask.' : 'Uses Claude through this site. What it needs from your sheet is sent only when you ask, and is not stored.';
+    $('asst-where').textContent = m === 'claude' ? 'Uses Claude on your own account. What it needs from your sheet is sent only when you ask.'
+      : m === 'claude-text' ? 'In this view the assistant can explain and advise, but cannot change the page. Open it in Claude on a computer to let it make changes.'
+      : m === 'api' ? 'Uses Claude through this site. What it needs from your sheet is sent only when you ask, and is not stored.' : '';
+    if (!m) { $('asst-hello').innerHTML = '<b>Assistant unavailable here</b>' + esc(UNAVAILABLE); $('asst-sugg').hidden = true; $('asst-in').disabled = true; $('asst-send').disabled = true; }
     renderSugg();
   });
 

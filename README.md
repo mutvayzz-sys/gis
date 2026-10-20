@@ -1,39 +1,38 @@
 # gis
 
-Progress judgement checker for **gis.gcaplabs.com**. Load a progress sheet (Excel, CSV or pasted rows) and the page shows it as a spreadsheet, fixes adding-up mistakes, checks the judgements against the 20% Weak and 20% Outstanding limits, and builds simulated sheets with the fewest changes that would fit. Formatted Excel workbooks are built in the browser for download.
+**Progress Judgements** for gis.gcaplabs.com. People load a progress sheet (Excel, CSV or pasted rows) and the page:
 
-**No data is held in this repository or the page.** Everything a person loads stays in their own browser tab: nothing is uploaded, sent or saved, and closing the tab clears it.
+1. reads the table, whatever its layout (columns can be matched by hand or by the assistant),
+2. lets them set the rules (thresholds, points for phase totals, rounding, limits),
+3. shows the actual results with adding-up mistakes fixed,
+4. builds a clearly labelled simulated scenario with the fewest changes that meet the Weak and Outstanding limits,
+5. downloads one Excel workbook: the original sheet, the corrected sheet and the simulated sheet in the same layout, a full comparison, judgement counts with both limit checks, total judgements from points, a corrections log, planning assumptions and the settings used. Percentages and judgements are formulas.
 
-The site is one self-contained page, `public/index.html`, served by a Cloudflare Worker using static assets (`wrangler.jsonc`), with no server code.
+**No data is held in this repository or the page.** Sheets are read and processed in the person's browser. The only exception is the assistant: when someone asks it something, the parts of the sheet it needs are sent to Claude through `/api/chat`. Nothing is stored.
 
 ## Files
 
 | Path | What it is |
 |---|---|
-| `src/template.html` | Page layout and styles |
-| `src/core.js` | Reading sheets, judgements, corrections and the simulation search |
-| `src/view.js` | Turns the loaded data into the page's tables and sheets |
-| `src/app.js` | Buttons, uploads, editing, tabs and downloads |
-| `src/xlwriter.js` | Builds the formatted Excel downloads (ExcelJS) |
+| `src/page.html` | Page layout, styles and the six steps |
+| `src/engine.js` | Reads tables, applies the rules, finds corrections, searches for the smallest simulation |
+| `src/book.js` | Builds the Excel workbook (ExcelJS), copying the uploaded sheet's own formatting |
+| `src/grid.js` | Draws a sheet on the page so it looks like Excel |
+| `src/app.js` | The steps, uploads, settings, charts and downloads |
+| `src/assistant.js` | The assistant: chat drawer, the page controls it may use, change log with Undo |
+| `src/prompt.txt` | The assistant's instructions (used by the page and the Worker) |
+| `worker/index.js` | Serves `public/` and relays `/api/chat` to Claude |
 | `scripts/build.js` | Joins `src/` into `public/index.html` |
-| `public/` | What gets deployed |
 
 After changing anything in `src/`, run `npm run build` and commit `public/index.html` too.
 
-Student sheets, reports and exports (`.xlsx`, `.csv`, `.pdf`) are blocked by `.gitignore` so they can't be committed by mistake.
+## Deploy (Cloudflare Workers)
 
-## Deploy with Cloudflare Workers
-
-1. Cloudflare dashboard → **Workers & Pages** → **Create** → **Import a repository** → pick `mutvayzz-sys/gis`.
+1. Workers & Pages, Create, Import a repository: `mutvayzz-sys/gis`.
 2. Build command: `npm run build`. Deploy command: `npx wrangler deploy`.
-3. Deploy. The `routes` entry in `wrangler.jsonc` connects the Worker to `gis.gcaplabs.com` and creates the DNS record, as long as `gcaplabs.com` is on the same Cloudflare account.
+3. Settings, Variables and Secrets: add a **Secret** `ANTHROPIC_API_KEY`. Without it the page still works; the assistant button stays hidden.
+4. The `routes` entry in `wrangler.jsonc` connects the Worker to `gis.gcaplabs.com` and creates the DNS record.
 
-Every push to `main` redeploys.
+The model is set by `MODEL` in `wrangler.jsonc`. `/api/chat` only accepts requests from the same site, caps request size and reply length, and only passes on the page's own tools. To limit who can use the assistant (and your API usage), put the site behind Cloudflare Access or add a rate-limiting rule for `/api/chat`.
 
-## Access
-
-The page holds no student data, so it can be public. If you want only staff to use it, put it behind **Cloudflare Access**: Zero Trust → Access → Applications → Add → Self-hosted, domain `gis.gcaplabs.com`, and allow only the people or email domain who should see it. `public/_headers` also tells search engines not to index it.
-
-## Updating the page
-
-Edit the files in `src/`, run `npm run build`, then commit and push.
+Student sheets, reports and exports (`.xlsx`, `.csv`, `.pdf`) are blocked by `.gitignore` so they can't be committed by mistake.

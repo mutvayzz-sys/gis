@@ -1,11 +1,15 @@
 {
-  // Static site served by a Cloudflare Worker (assets only, no server code).
+  // The page is static (public/). The Worker only adds /api/chat for the assistant.
   "$schema": "node_modules/wrangler/config-schema.json",
   "name": "gis",
+  "main": "worker/index.js",
   "compatibility_date": "2026-06-01",
   "assets": {
-    "directory": "./public"
+    "directory": "./public",
+    "binding": "ASSETS"
   },
+  // The model the assistant uses. The API key is a secret: ANTHROPIC_API_KEY.
+  "vars": { "MODEL": "claude-sonnet-5-5" },
   // Attaches the Worker to gis.gcaplabs.com and creates the DNS record for it.
   "routes": [
     { "pattern": "gis.gcaplabs.com", "custom_domain": true }

@@ -1,22 +1,21 @@
-// Builds public/index.html from the files in src/. Run: npm run build
+// Builds public/index.html from src/. Run: npm run build
 const fs = require('fs');
 const path = require('path');
 const root = path.join(__dirname, '..');
-const src = (f) => fs.readFileSync(path.join(root, 'src', f), 'utf8');
+const rd = (f) => fs.readFileSync(path.join(root, 'src', f), 'utf8');
+const strip = (s, name) => s.replace("if (typeof module !== 'undefined') module.exports = " + name + ";", '');
 
-let page = src('template.html');
 const fill = {
-  EDITOR: '', N_ALL: '0', N_GRADES: '0', N_TOTALS: '0', DIST_NOW: '', TABLE_NOW: '', FIXES: '', COMPARE: '',
-  CORE: src('core.js').replace("if (typeof module !== 'undefined') module.exports = Core;", ''),
-  VIEW: src('view.js').replace("if (typeof module !== 'undefined') module.exports = View;", ''),
-  APP: src('xlwriter.js') + '\n' + src('app.js')
+  PROMPT: JSON.stringify(rd('prompt.txt')),
+  ENGINE: strip(rd('engine.js'), 'Engine'),
+  BOOK: strip(rd('book.js'), 'Book'),
+  GRID: strip(rd('grid.js'), 'Grid'),
+  APP: rd('app.js').replace('/*ASSISTANT*/', rd('assistant.js'))
 };
-page = page.replace(/\{\{([A-Z_]+)\}\}/g, (m, k) => {
+const page = rd('page.html').replace(/\{\{([A-Z]+)\}\}/g, (m, k) => {
   if (fill[k] == null) throw new Error('No value for placeholder ' + k);
   return fill[k];
 });
-page = page.replace('<a class="skip"', '<script>document.body.classList.add("is-empty")</script>\n<a class="skip"');
-
 const html = `<!doctype html>
 <html lang="en">
 <head>

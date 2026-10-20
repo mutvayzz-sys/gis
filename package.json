@@ -4,6 +4,7 @@
   "description": "Progress judgement checker for gis.gcaplabs.com. Holds no student data.",
   "scripts": {
     "build": "node scripts/build.js",
+    "dev": "node scripts/build.js && npx wrangler dev",
     "deploy": "node scripts/build.js && npx wrangler deploy"
   }
 }

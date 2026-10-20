@@ -1,0 +1,444 @@
+/* Builds the output workbook with ExcelJS. The uploaded sheet is copied with its own formatting,
+   then corrected (actual) and simulated versions get formulas, highlights and notes. */
+var Book = (function (E) {
+  var T = { style: 'thin', color: { argb: 'FF000000' } }, M = { style: 'medium', color: { argb: 'FF000000' } };
+  var C = { yel: 'FFFFFF00', cream: 'FFFEF2CB', pale: 'FFFEFFB3', blue: 'FFDFE3FF', ink: 'FF0000B8', orange: 'FFFCE4D6', green: 'FF548235', red: 'FFC00000', grey: 'FF808080', white: 'FFFFFFFF', head: 'FF1F3864' };
+  function fill(a) { return { type: 'pattern', pattern: 'solid', fgColor: { argb: a } }; }
+  function font(o) { o = o || {}; var f = { name: 'Calibri', size: o.size || 10, bold: !!o.bold, italic: !!o.italic }; if (o.color) f.color = { argb: o.color }; return f; }
+  var L = E.colLetter;
+  var NAMES = {
+    orig: 'Original (as received)', actual: 'Actual results (corrected)', comp: 'Comparison', counts: 'Judgement counts',
+    totals: 'Total judgements', log: 'Corrections log', plan: 'Planning assumptions', settings: 'Settings'
+  };
+  function simSheetName(cfg) {
+    var n = String(cfg.simTitle || 'Simulated scenario—not actual results').replace(/[\[\]:*?\/\\]/g, '-');
+    return n.length <= 31 ? n : 'Simulated—not actual results';
+  }
+  function q(name) { return "'" + name.replace(/'/g, "''") + "'"; }
+  function setup(ws) { ws.pageSetup = { orientation: 'landscape', fitToPage: true, fitToWidth: 1, fitToHeight: 0, paperSize: 9 }; }
+
+  function clone(dst, src, name) {
+    var ws = dst.addWorksheet(name);
+    var model = JSON.parse(JSON.stringify(src.model));
+    model.name = name; model.mergeCells = model.merges || [];
+    delete model.id; model.tables = []; model.media = []; model.conditionalFormattings = model.conditionalFormattings || []; model.dataValidations = model.dataValidations || {};
+    ws.model = Object.assign(model, { id: ws.id });
+    ws.name = name;
+    return ws;
+  }
+
+  /* ---------- Settings sheet (formulas point here) ---------- */
+  var S = { acc: '$C$5', good: '$C$6', vg: '$C$7', out: '$C$8', vw: '$C$9', capW: '$C$10', capO: '$C$11', rule: '$C$12', ruleIdx: '$C$13', method: '$C$14', basis: '$C$15', vwAsWeak: '$C$16', assessed: '$C$17', subst: '$C$18' };
+  var RULES = ['Not supplied (nearest point used for now)', 'Nearest whole point', 'Round down', 'Round up'];
+  function ruleText(r) { return { unspecified: RULES[0], nearest: RULES[1], down: RULES[2], up: RULES[3] }[r] || RULES[0]; }
+  function settingsSheet(wb, cfg) {
+    var ws = wb.addWorksheet(NAMES.settings, { properties: { tabColor: { argb: 'FF2E75B6' } } }); setup(ws);
+    [3, 44, 30, 60].forEach(function (w, i) { ws.getColumn(i + 1).width = w; });
+    ws.getCell('B2').value = 'Settings used for this workbook'; ws.getCell('B2').font = font({ size: 14, bold: true });
+    ws.getCell('B3').value = 'Every formula in the workbook reads these cells. Thresholds were not changed to reach the targets.'; ws.getCell('B3').font = font({ italic: true, color: 'FF595959' });
+    var rows = [
+      ['Acceptable: share making expected or better progress (at least)', cfg.acc, '0%'],
+      ['Good: share making better than expected progress (at least)', cfg.good, '0%'],
+      ['Very Good: share making better than expected progress (at least)', cfg.vg, '0%'],
+      ['Outstanding: share making better than expected progress (at least)', cfg.out, '0%'],
+      ['Very Weak: below this share making expected or better (blank = not used)', cfg.vw == null ? null : cfg.vw, '0%'],
+      ['Most Weak judgements allowed', cfg.capWeak, '0%'],
+      ['Most Outstanding judgements allowed', cfg.capOut, '0%'],
+      ['Rounding rule for decimal averages', ruleText(cfg.rounding)],
+      ['Rounding rule number (used by formulas)', { formula: 'MATCH(' + S.rule + ',{"' + RULES.join('","') + '"},0)' }],
+      ['How a phase total is judged', cfg.totalMethod === 'points' ? 'Average of its grade judgements (points)' : 'From summed student counts'],
+      ['Which judgements count toward the limits', { both: 'Grades and phase totals', grades: 'Grades only', phases: 'Phase totals only' }[cfg.basis]],
+      ['Count Very Weak with Weak for the limit', cfg.vwCountsAsWeak ? 'Yes' : 'No'],
+      ['Use the % assessed column', cfg.useAssessed ? 'Yes' : 'No'],
+      ['Flag an adjustment as substantial above (percentage points)', cfg.substantialPts]
+    ];
+    rows.forEach(function (r, i) {
+      var rr = 5 + i, a = ws.getCell(rr, 2), b = ws.getCell(rr, 3);
+      a.value = r[0]; b.value = r[1]; if (r[2]) b.numFmt = r[2];
+      a.font = font(); b.font = font({ bold: true, color: 'FF0000FF' }); b.alignment = { horizontal: 'center' };
+      a.fill = fill(C.cream); b.fill = fill(C.pale);
+      [a, b].forEach(function (x, j) { x.border = { top: T, bottom: T, left: j === 0 ? M : T, right: j === 1 ? M : T }; });
+    });
+    ws.getCell(13, 3).font = font({ color: 'FF595959' });
+    // points table, sorted ascending so MATCH(...,1) works
+    ws.getCell('B21').value = 'Points for each judgement'; ws.getCell('B21').font = font({ size: 12, bold: true });
+    var pts = E.CATS.filter(function (k) { return cfg.points[k] != null && cfg.points[k] !== ''; }).map(function (k) { return [k, +cfg.points[k]]; }).sort(function (a, b) { return a[1] - b[1]; });
+    ['Judgement', 'Points'].forEach(function (h, i) { var x = ws.getCell(22, 2 + i); x.value = h; x.font = font({ bold: true }); x.fill = fill(C.yel); x.border = { top: M, bottom: M, left: i === 0 ? M : T, right: i === 1 ? M : T }; x.alignment = { horizontal: 'center' }; });
+    pts.forEach(function (p, i) {
+      var a = ws.getCell(23 + i, 2), b = ws.getCell(23 + i, 3); a.value = p[0]; b.value = p[1];
+      [a, b].forEach(function (x, j) { x.font = font({ bold: j === 1, color: j === 1 ? 'FF0000FF' : null }); x.fill = fill(j ? C.pale : C.cream); x.alignment = { horizontal: 'center' }; x.border = { top: T, bottom: i === pts.length - 1 ? M : T, left: j === 0 ? M : T, right: j === 1 ? M : T }; });
+    });
+    var last = 22 + pts.length;
+    return { names: '$B$23:$B$' + last, pts: '$C$23:$C$' + last };
+  }
+
+  /* ---------- formulas for one copied table ---------- */
+  function ru(t, a) { return 'ROUNDUP(' + t + '*' + a + '-0.000000001,0)'; }
+  function judgeF(a, g, h) {
+    var st = q(NAMES.settings) + '!';
+    return 'IF(' + a + '<=0,"No data",IF(AND(' + st + S.vw + '<>"",' + g + '<' + ru(st + S.vw, a) + '),"Very Weak",IF(' + g + '<' + ru(st + S.acc, a) + ',"Weak",IF(' + h + '>=' + ru(st + S.out, a) + ',"Outstanding",IF(' + h + '>=' + ru(st + S.vg, a) + ',"Very Good",IF(' + h + '>=' + ru(st + S.good, a) + ',"Good","Acceptable"))))))';
+  }
+  function roundF(p) { var st = q(NAMES.settings) + '!'; return 'CHOOSE(' + st + S.ruleIdx + ',ROUND(' + p + ',0),ROUND(' + p + ',0),ROUNDDOWN(' + p + ',0),ROUNDUP(' + p + ',0))'; }
+
+  // mode: 'actual' | 'sim'. model: built model (actual or simulated). base: actual model (for sim highlights)
+  function writeTable(ws, ctx, mode, model, base, tabRef) {
+    var cfg = ctx.cfg, parsed = ctx.parsed, st = q(NAMES.settings) + '!';
+    var byId = {}; model.items.forEach(function (it) { byId[it.id] = it; });
+    var baseById = {}; (base || model).items.forEach(function (it) { baseById[it.id] = it; });
+    var fixes = E.findFixes(parsed, cfg).fixes;
+    var helpers = {};
+    parsed.blocks.forEach(function (b) {
+      var c = b.col, maxC = 0;
+      Object.keys(c).forEach(function (k) { if (c[k] != null) maxC = Math.max(maxC, c[k]); });
+      var hA = maxC + 1, hP = maxC + 2, hK = c.K || null;
+      if (!hK) { hK = maxC + 3; }
+      helpers[b.id] = { A: hA, P: hP, K: hK };
+      var hr = b.headerRow;
+      var heads = [[hA, 'Assessed students (calculated)'], [hP, 'Points (component) / average (total)']];
+      if (!c.K) heads.push([hK, 'Judgement (calculated)']);
+      heads.forEach(function (h) {
+        var x = ws.getCell(hr, h[0]); x.value = h[1]; x.font = font({ bold: true, color: 'FF595959', size: 9 }); x.fill = fill('FFF2F2F2');
+        x.alignment = { horizontal: 'center', vertical: 'middle', wrapText: true }; x.border = { top: M, bottom: M, left: T, right: T };
+        if (ws.getColumn(h[0]).width == null || ws.getColumn(h[0]).width < 12) ws.getColumn(h[0]).width = 14;
+      });
+      function cellRef(col, r) { return L(col) + r; }
+      function setF(col, r, f, result, fmt) { var x = ws.getCell(r, col); x.value = { formula: f, result: result }; if (fmt) x.numFmt = fmt; return x; }
+      function styleHelper(x, isT) { x.font = font({ bold: isT, color: 'FF595959' }); x.fill = fill('FFF7F7F7'); x.alignment = { horizontal: 'center', vertical: 'middle' }; x.border = { top: T, bottom: T, left: T, right: T }; }
+      // grade rows
+      b.rows.forEach(function (x0) {
+        var id = b.id + ':' + x0.r, it = byId[id], bi = baseById[id]; if (!it) return;
+        var r = x0.r;
+        // edited or simulated counts
+        ['E', 'G', 'H'].forEach(function (k) {
+          if (c[k] == null) return;
+          var cell = ws.getCell(r, c[k]), srcV = x0.orig ? x0.orig[k] : x0[k];
+          if (it[k] !== srcV && it[k] != null) {
+            cell.value = it[k];
+            if (mode === 'sim' && bi && it[k] !== bi[k]) { cell.fill = fill(C.blue); cell.font = font({ bold: true, color: C.ink }); cell.note = 'SIMULATED (planning assumption). Actual value ' + E.fmt(bi[k]) + ', change ' + (it[k] - bi[k] > 0 ? '+' : '') + E.fmt(it[k] - bi[k]) + '.'; }
+            else if (bi && it[k] === bi[k] && it[k] !== srcV) { cell.note = 'Edited on the page. File value ' + E.fmt(srcV) + '.'; }
+          }
+        });
+        var aRef = cellRef(hA, r), gRef = cellRef(c.G, r), hRef = cellRef(c.H, r);
+        var aF = (cfg.useAssessed && c.F != null) ? 'ROUND(' + cellRef(c.E, r) + '*IF(' + cellRef(c.F, r) + '>1,' + cellRef(c.F, r) + '/100,' + cellRef(c.F, r) + '),0)' : cellRef(c.E, r);
+        styleHelper(setF(hA, r, aF, it.A, '0'), false);
+        if (c.I != null) { var xi = setF(c.I, r, 'IF(' + aRef + '>0,' + gRef + '/' + aRef + ',0)', it.I || 0, '0.0%'); if (mode === 'sim' && bi && it.G !== bi.G) { xi.fill = fill(C.blue); xi.font = font({ bold: true, color: C.ink }); } }
+        if (c.J != null) { var xj = setF(c.J, r, 'IF(' + aRef + '>0,' + hRef + '/' + aRef + ',0)', it.J || 0, '0.0%'); if (mode === 'sim' && bi && it.H !== bi.H) { xj.fill = fill(C.blue); xj.font = font({ bold: true, color: C.ink }); } }
+        var xk = setF(hK, r, judgeF(aRef, gRef, hRef), it.judg);
+        if (!c.K) styleHelper(xk, false);
+        if (mode === 'sim' && bi && it.judg !== bi.judg) { xk.fill = fill(C.blue); xk.font = font({ bold: true, color: C.ink }); xk.note = 'SIMULATED. Actual judgement: ' + bi.judg + '.'; }
+        else if (mode === 'actual' && x0.K && x0.K !== it.judg) { xk.fill = fill(C.orange); xk.note = 'Corrected. The file said ' + x0.K + '.'; }
+        if (mode === 'actual') {
+          if (c.I != null && x0.I != null && Math.abs(x0.I - (it.I || 0)) > 5e-5) { ws.getCell(r, c.I).fill = fill(C.orange); ws.getCell(r, c.I).note = 'Corrected. The file said ' + E.pct(x0.I, 2) + '.'; }
+          if (c.J != null && x0.J != null && Math.abs(x0.J - (it.J || 0)) > 5e-5) { ws.getCell(r, c.J).fill = fill(C.orange); ws.getCell(r, c.J).note = 'Corrected. The file said ' + E.pct(x0.J, 2) + '.'; }
+        }
+        styleHelper(setF(hP, r, 'IFERROR(INDEX(' + st + ctx.pts.pts + ',MATCH(' + cellRef(hK, r) + ',' + st + ctx.pts.names + ',0)),"")', it.pts == null ? '' : it.pts, '0'), false);
+      });
+      // total rows that exist in the sheet
+      b.totals.forEach(function (t0) {
+        var r = t0.r, mem = t0.members.slice();
+        var unit = model.units.filter(function (u) { return u.total && u.total.r === r; })[0]; if (!unit) return;
+        var it = unit.total, bu = (base || model).units.filter(function (u) { return u.total && u.total.r === r; })[0], bi = bu ? bu.total : null;
+        var contiguous = mem.length && mem[mem.length - 1] - mem[0] === mem.length - 1;
+        function sumF(col) { return contiguous ? 'SUM(' + L(col) + mem[0] + ':' + L(col) + mem[mem.length - 1] + ')' : mem.map(function (m) { return L(col) + m; }).join('+'); }
+        var fixed = {};
+        ['E', 'G', 'H'].forEach(function (k) {
+          if (c[k] == null) return;
+          var x = setF(c[k], r, sumF(c[k]), it[k], '0');
+          if (mode === 'actual' && t0[k] != null && Math.abs(t0[k] - it[k]) > 1e-6) { x.fill = fill(C.orange); x.note = 'Corrected. The file said ' + E.fmt(t0[k]) + ' (it should be the sum of the rows).'; fixed[k] = 1; }
+          if (mode === 'sim' && bi && it[k] !== bi[k]) { x.fill = fill(C.blue); x.font = font({ bold: true, color: C.ink }); x.note = 'Changes because its rows changed. Actual ' + E.fmt(bi[k]) + '.'; }
+        });
+        var aRef = cellRef(hA, r);
+        styleHelper(setF(hA, r, sumF(hA), it.A, '0'), true);
+        ['I', 'J'].forEach(function (k) {
+          if (c[k] == null) return;
+          var cnt = k === 'I' ? c.G : c.H, v = k === 'I' ? it.I : it.J;
+          var x = setF(c[k], r, 'IF(' + aRef + '>0,' + L(cnt) + r + '/' + aRef + ',0)', v || 0, '0.0%');
+          if (mode === 'actual' && t0[k] != null && Math.abs(t0[k] - (v || 0)) > 5e-5) { x.fill = fill(C.orange); x.note = 'Corrected. The file said ' + E.pct(t0[k], 2) + ' (a simple average, not total divided by total).'; }
+          if (mode === 'sim' && bi && Math.abs((v || 0) - ((k === 'I' ? bi.I : bi.J) || 0)) > 1e-9) { x.fill = fill(C.blue); x.font = font({ bold: true, color: C.ink }); }
+        });
+        // points average and total judgement
+        var pRange = contiguous ? L(hP) + mem[0] + ':' + L(hP) + mem[mem.length - 1] : mem.map(function (m) { return L(hP) + m; }).join(',');
+        var xp = setF(hP, r, 'IFERROR(AVERAGE(' + pRange + '),"")', it.avg == null ? '' : it.avg, '0.00'); styleHelper(xp, true);
+        if (it.roundingFlag) { xp.fill = fill('FFFFF2CC'); xp.note = 'Average ' + it.avg.toFixed(2) + '. No rounding rule was supplied, so the nearest whole point is used for now. Please confirm the rule.'; }
+        var kf = cfg.totalMethod === 'points'
+          ? 'IFERROR(INDEX(' + st + ctx.pts.names + ',MATCH(' + roundF(L(hP) + r) + ',' + st + ctx.pts.pts + ',1)),"No data")'
+          : judgeF(aRef, L(c.G) + r, L(c.H) + r);
+        var xk = setF(hK, r, kf, it.judg);
+        if (!c.K) styleHelper(xk, true);
+        if (mode === 'actual' && t0.K && t0.K !== it.judg) { xk.fill = fill(C.orange); xk.note = 'Corrected. The file said ' + t0.K + '.'; }
+        if (mode === 'sim' && bi && it.judg !== bi.judg) { xk.fill = fill(C.blue); xk.font = font({ bold: true, color: C.ink }); xk.note = 'SIMULATED. Actual judgement: ' + bi.judg + '.'; }
+      });
+      // phase label fix: re-merge the phase column per unit when labels were out of place
+      if (c.phase != null && fixes.some(function (f) { return f.kind === 'label'; })) {
+        var lo = b.headerRow + 1, hi = b.endRow;
+        (ws.model.merges || []).slice().forEach(function (m) {
+          var mm = /^([A-Z]+)(\d+):([A-Z]+)(\d+)$/.exec(m); if (!mm) return;
+          if (mm[1] === L(c.phase) && mm[3] === L(c.phase) && +mm[4] >= lo && +mm[2] <= hi) { try { ws.unMergeCells(m); } catch (e) { } }
+        });
+        var proto = ws.getCell(b.rows[0].r, c.phase).style;
+        model.units.filter(function (u) { return u.blockId === b.id; }).forEach(function (u) {
+          var rows = u.grades.map(function (g) { return g.r; }).concat(u.total && u.total.r ? [u.total.r] : []).sort(function (a, z) { return a - z; });
+          if (!rows.length) return;
+          for (var rr = rows[0]; rr <= rows[rows.length - 1]; rr++) { var cc = ws.getCell(rr, c.phase); cc.value = rr === rows[0] ? (isNaN(+u.phase) ? u.phase : +u.phase) : null; cc.style = JSON.parse(JSON.stringify(proto)); }
+          if (rows[rows.length - 1] - rows[0] === rows.length - 1 && rows.length > 1) { try { ws.mergeCells(rows[0], c.phase, rows[rows.length - 1], c.phase); } catch (e) { } }
+          if (mode === 'actual') { ws.getCell(rows[0], c.phase).note = 'Phase label moved so it matches the rows its total adds up.'; }
+        });
+      }
+    });
+    return helpers;
+  }
+  function banner(ws, ctx, text, color) {
+    var b = ctx.parsed.blocks[0], minC = Infinity, maxC = 0;
+    ctx.parsed.blocks.forEach(function (bb) { Object.keys(bb.col).forEach(function (k) { if (bb.col[k] != null) { minC = Math.min(minC, bb.col[k]); maxC = Math.max(maxC, bb.col[k]); } }); });
+    maxC += 3;
+    var row1Free = true;
+    for (var c = minC; c <= maxC; c++) { var v = ws.getCell(1, c).value; if (v != null && v !== '') row1Free = false; }
+    if (row1Free && b.headerRow > 1) {
+      (ws.model.merges || []).forEach(function (m) { if (/^[A-Z]+1:/.test(m)) { try { ws.unMergeCells(m); } catch (e) { } } });
+      try { ws.mergeCells(1, minC, 1, maxC); } catch (e) { }
+      var x = ws.getCell(1, minC); x.value = text; x.font = font({ size: 11, bold: true, color: C.white }); x.fill = fill(color); x.alignment = { horizontal: 'center', vertical: 'middle' };
+      ws.getRow(1).height = 22;
+    } else {
+      var y = ws.getCell(b.headerRow, maxC + 2); y.value = text; y.font = font({ bold: true, color: C.white }); y.fill = fill(color); ws.getColumn(maxC + 2).width = 48;
+    }
+  }
+
+  /* ---------- plain formatted tables ---------- */
+  function table(ws, r0, c0, headers, rows, o) {
+    o = o || {};
+    headers.forEach(function (h, i) {
+      var x = ws.getCell(r0, c0 + i); x.value = h; x.font = font({ bold: true }); x.fill = fill((o.headFills && o.headFills[i]) || C.yel);
+      x.alignment = { horizontal: 'center', vertical: 'middle', wrapText: true };
+      x.border = { top: M, bottom: M, left: i === 0 ? M : T, right: i === headers.length - 1 ? M : T };
+    });
+    ws.getRow(r0).height = o.headHeight || 32;
+    rows.forEach(function (row, j) {
+      var r = r0 + 1 + j, last = j === rows.length - 1, lines = 1;
+      row.forEach(function (v, i) {
+        var x = ws.getCell(r, c0 + i); x.value = v;
+        var f = o.fills ? (typeof o.fills === 'function' ? o.fills(i, j, row) : o.fills[i]) : C.cream; x.fill = fill(f || C.cream);
+        x.font = font({ bold: o.bold && o.bold(i, j, row), color: o.colors && o.colors(i, j, row) });
+        x.alignment = { horizontal: o.left && o.left[i] ? 'left' : 'center', vertical: 'middle', wrapText: true };
+        x.border = { top: T, bottom: last ? M : T, left: i === 0 ? M : T, right: i === row.length - 1 ? M : T };
+        if (o.fmt && o.fmt[i]) x.numFmt = o.fmt[i];
+        if (typeof v === 'string' && o.widths) lines = Math.max(lines, Math.ceil(v.length * 1.1 / (o.widths[i] || 10)));
+      });
+      if (o.widths) ws.getRow(r).height = Math.max(16, 13.5 * lines + 3);
+    });
+    if (o.widths) o.widths.forEach(function (w, i) { ws.getColumn(c0 + i).width = w; });
+    return r0 + rows.length;
+  }
+  function titled(wb, name, title, sub, tab) {
+    var ws = wb.addWorksheet(name, { properties: { tabColor: { argb: tab } } }); setup(ws);
+    ws.getColumn(1).width = 3;
+    ws.getCell('B2').value = title; ws.getCell('B2').font = font({ size: 14, bold: true });
+    if (sub) { ws.getCell('B3').value = sub; ws.getCell('B3').font = font({ italic: true, color: 'FF595959' }); }
+    return ws;
+  }
+
+  /* ---------- the whole workbook ---------- */
+  function build(ctx) {
+    // ctx: {srcWb, sheetName, parsed, cfg, base, sim, sel}
+    var cfg = ctx.cfg, wb = new ExcelJS.Workbook(); wb.creator = 'Progress Judgements'; wb.created = new Date();
+    wb.calcProperties = { fullCalcOnLoad: true };
+    var src = ctx.srcWb.getWorksheet(ctx.sheetName) || ctx.srcWb.worksheets[0];
+    var opt = ctx.sim && ctx.sim.options && ctx.sim.options[ctx.sel || 0];
+    var simName = simSheetName(cfg);
+    var origSrc = (ctx.origWb && ctx.origWb.getWorksheet(ctx.sheetName)) || src;
+    var o = clone(wb, origSrc, NAMES.orig); o.properties.tabColor = { argb: C.grey };
+    var a = clone(wb, src, NAMES.actual); a.properties.tabColor = { argb: C.green };
+    var s = opt ? clone(wb, src, simName) : null; if (s) s.properties.tabColor = { argb: C.red };
+    var pts = settingsSheet(wb, cfg); ctx.pts = pts;
+    var help = writeTable(a, ctx, 'actual', ctx.base, null);
+    banner(a, ctx, 'ACTUAL RESULTS, corrected. Orange cells were fixed (see Corrections log).', C.green);
+    if (s) { writeTable(s, ctx, 'sim', opt.model, ctx.base); banner(s, ctx, String(cfg.simTitle).toUpperCase() + '. Blue cells are planning assumptions.', C.red); }
+    comparison(wb, ctx, opt, simName, help);
+    countsSheet(wb, ctx, opt);
+    totalsSheet(wb, ctx, opt, simName, help);
+    logSheet(wb, ctx);
+    planSheet(wb, ctx, opt);
+    // order
+    var order = [NAMES.orig, NAMES.actual].concat(s ? [simName] : []).concat([NAMES.comp, NAMES.counts, NAMES.totals, NAMES.log, NAMES.plan, NAMES.settings]);
+    order.forEach(function (n, i) { var w = wb.getWorksheet(n); if (w) w.orderNo = i; });
+    wb.eachSheet(function (w) { setup(w); });
+    return wb;
+  }
+
+  function comparison(wb, ctx, opt, simName, help) {
+    var ws = titled(wb, NAMES.comp, 'Actual and simulated results, row by row', opt ? 'Every count, its simulated value, the difference and any judgement change. Simulated values are planning assumptions, not actual results.' : 'The actual results meet the targets, so there is no simulation.', 'FF2E75B6');
+    var base = ctx.base, sm = opt ? opt.model : base, byId = {}; sm.items.forEach(function (it) { byId[it.id] = it; });
+    var heads = ['Table', 'Group', 'Phase', 'Grade', 'Level', 'Students', 'Assessed', 'Expected or better: actual', 'Expected or better: simulated', 'Difference', 'Better than expected: actual', 'Better than expected: simulated', 'Difference', '% expected or better: actual', '% expected or better: simulated', '% better than expected: actual', '% better than expected: simulated', 'Judgement: actual', 'Judgement: simulated', 'Judgement changed?'];
+    var r0 = 5, rows = [];
+    base.items.forEach(function (b, i) {
+      var s = byId[b.id] || b, r = r0 + 1 + i;
+      rows.push([b.block, b.group, b.phase, b.kind === 'total' ? 'Total' : b.grade, b.kind === 'total' ? 'Phase total' : 'Grade', b.E, b.A, b.G, s.G,
+        { formula: 'J' + r + '-I' + r, result: s.G - b.G }, b.H, s.H, { formula: 'M' + r + '-L' + r, result: s.H - b.H },
+        { formula: 'IF(H' + r + '>0,I' + r + '/H' + r + ',0)', result: b.I || 0 }, { formula: 'IF(H' + r + '>0,J' + r + '/H' + r + ',0)', result: s.I || 0 },
+        { formula: 'IF(H' + r + '>0,L' + r + '/H' + r + ',0)', result: b.J || 0 }, { formula: 'IF(H' + r + '>0,M' + r + '/H' + r + ',0)', result: s.J || 0 },
+        refJ(NAMES.actual, b, ctx, help) || b.judg, opt ? (refJ(simName, s, ctx, help) || s.judg) : refJ(NAMES.actual, b, ctx, help) || b.judg,
+        { formula: 'IF(S' + r + '=T' + r + ',"No","Yes")', result: s.judg === b.judg ? 'No' : 'Yes' }]);
+    });
+    var simCols = [8, 11, 14, 16, 18];
+    table(ws, r0, 2, heads, rows, {
+      headFills: heads.map(function (_, i) { return simCols.indexOf(i) >= 0 ? C.blue : C.yel; }),
+      fills: function (i, j, row) { return simCols.indexOf(i) >= 0 ? C.blue : (row[4] === 'Phase total' ? C.pale : C.cream); },
+      bold: function (i, j, row) { return row[4] === 'Phase total' || i === 9 || i === 12 || i === 19; },
+      colors: function (i, j, row) { return simCols.indexOf(i) >= 0 ? C.ink : null; },
+      fmt: [null, null, null, null, null, '0', '0', '0', '0', '+0;-0;0', '0', '0', '+0;-0;0', '0.0%', '0.0%', '0.0%', '0.0%'],
+      headHeight: 46, widths: [14, 14, 8, 10, 11, 9, 9, 11, 11, 10, 11, 11, 10, 11, 11, 11, 11, 13, 13, 11]
+    });
+    ws.views = [{ state: 'frozen', ySplit: r0, xSplit: 5 }];
+    // highlight judgement changes
+    rows.forEach(function (row, j) { if (row[19].result === 'Yes') ['T', 'S'].forEach(function (L2) { ws.getCell(L2 + (r0 + 1 + j)).font = font({ bold: true, color: 'FFC00000' }); }); });
+    ctx.compRows = { first: r0 + 1, last: r0 + rows.length };
+  }
+  function refJ(sheet, it, ctx, help) {
+    if (!it.r) return null;
+    var b = ctx.parsed.blocks.filter(function (x) { return x.id === it.blockId; })[0]; if (!b) return null;
+    var col = help[b.id] ? help[b.id].K : b.col.K;
+    return { formula: q(sheet) + '!' + L(col) + it.r, result: it.judg };
+  }
+
+  function countsSheet(wb, ctx, opt) {
+    var cfg = ctx.cfg, ws = titled(wb, NAMES.counts, 'How many of each judgement', 'Grade-level and phase-level results are counted separately, then together. Checked against both limits in Settings.', 'FF2E75B6');
+    var cr = ctx.compRows, cmp = q(NAMES.comp) + '!', st = q(NAMES.settings) + '!';
+    var lev = cmp + '$F$' + cr.first + ':$F$' + cr.last, ja = cmp + '$S$' + cr.first + ':$S$' + cr.last, js = cmp + '$T$' + cr.first + ':$T$' + cr.last;
+    var cats = E.CATS.slice().reverse();
+    var groups = [['Grades', '"Grade"'], ['Phase totals', '"Phase total"'], ['All judgements', '"*"']];
+    var heads = ['Judgement'];
+    groups.forEach(function (g) { heads.push(g[0] + ': actual', g[0] + ': simulated'); });
+    var r0 = 5, rows = cats.map(function (k) {
+      var row = [k];
+      groups.forEach(function (g) { row.push({ formula: 'COUNTIFS(' + lev + ',' + g[1] + ',' + ja + ',"' + k + '")' }, { formula: 'COUNTIFS(' + lev + ',' + g[1] + ',' + js + ',"' + k + '")' }); });
+      return row;
+    });
+    var tr = r0 + cats.length + 1;
+    rows.push(['Total'].concat(heads.slice(1).map(function (_, i) { var col = L(3 + i); return { formula: 'SUM(' + col + (r0 + 1) + ':' + col + (tr - 1) + ')' }; })));
+    var wkRows = cfg.vwCountsAsWeak ? [r0 + cats.indexOf('Weak') + 1, r0 + cats.indexOf('Very Weak') + 1] : [r0 + cats.indexOf('Weak') + 1];
+    var oRow = r0 + cats.indexOf('Outstanding') + 1;
+    rows.push(['Weak share' + (cfg.vwCountsAsWeak ? ' (incl. Very Weak)' : '')].concat(heads.slice(1).map(function (_, i) { var col = L(3 + i); return { formula: 'IF(' + col + tr + '>0,(' + wkRows.map(function (x) { return col + x; }).join('+') + ')/' + col + tr + ',0)' }; })));
+    rows.push(['Within the Weak limit?'].concat(heads.slice(1).map(function (_, i) { var col = L(3 + i); return { formula: 'IF(' + col + (tr + 1) + '<=' + st + S.capW + '+0.0000001,"Yes","No")' }; })));
+    rows.push(['Outstanding share'].concat(heads.slice(1).map(function (_, i) { var col = L(3 + i); return { formula: 'IF(' + col + tr + '>0,' + col + oRow + '/' + col + tr + ',0)' }; })));
+    rows.push(['Within the Outstanding limit?'].concat(heads.slice(1).map(function (_, i) { var col = L(3 + i); return { formula: 'IF(' + col + (tr + 3) + '<=' + st + S.capO + '+0.0000001,"Yes","No")' }; })));
+    // fill results so viewers without recalculation still see numbers
+    var lists = {
+      'Grades': [E.counted(ctx.base.items, 'grades'), E.counted((opt ? opt.model : ctx.base).items, 'grades')],
+      'Phase totals': [E.counted(ctx.base.items, 'phases'), E.counted((opt ? opt.model : ctx.base).items, 'phases')],
+      'All judgements': [E.counted(ctx.base.items, 'both'), E.counted((opt ? opt.model : ctx.base).items, 'both')]
+    };
+    var colLists = []; groups.forEach(function (g) { colLists.push(lists[g[0]][0], lists[g[0]][1]); });
+    colLists.forEach(function (lst, i) {
+      var k = E.check(lst, cfg), d = k.d;
+      cats.forEach(function (cat, j) { rows[j][1 + i].result = d.counts[cat]; });
+      rows[cats.length][1 + i].result = d.n;
+      rows[cats.length + 1][1 + i].result = d.n ? k.weak / d.n : 0;
+      rows[cats.length + 2][1 + i].result = k.weakOk ? 'Yes' : 'No';
+      rows[cats.length + 3][1 + i].result = d.n ? k.out / d.n : 0;
+      rows[cats.length + 4][1 + i].result = k.outOk ? 'Yes' : 'No';
+    });
+    table(ws, r0, 2, heads, rows, {
+      headFills: heads.map(function (_, i) { return i > 0 && i % 2 === 0 ? C.blue : C.yel; }),
+      fills: function (i, j) { return i === 0 ? C.pale : (i % 2 === 0 ? C.blue : C.cream); },
+      bold: function (i, j) { return j >= cats.length; },
+      fmt: [null], widths: [30, 12, 12, 12, 12, 12, 12], headHeight: 40
+    });
+    [tr + 1, tr + 3].forEach(function (r) { for (var i = 0; i < 6; i++) ws.getCell(r, 3 + i).numFmt = '0.0%'; });
+    [tr + 2, tr + 4].forEach(function (r) { for (var i = 0; i < 6; i++) { var x = ws.getCell(r, 3 + i); x.font = font({ bold: true, color: x.value.result === 'Yes' ? 'FF375623' : 'FFC00000' }); } });
+    var note = ws.getCell(tr + 7, 2);
+    note.value = 'The targets are checked on: ' + { both: 'all judgements (grades and phase totals)', grades: 'grade judgements only', phases: 'phase total judgements only' }[cfg.basis] + '. With few judgements, a 20% limit allows very few Weak results (for example, 0 of 3).';
+    note.font = font({ italic: true, color: 'FF595959' });
+  }
+
+  function totalsSheet(wb, ctx, opt, simName, help) {
+    var cfg = ctx.cfg, ws = titled(wb, NAMES.totals, 'Total judgements from points', 'Each grade (component) has equal weight. Average = sum of points / number of components. Aggregate percentages come from summed counts and are separate from the points.', 'FF2E75B6');
+    var heads = ['Table', 'Group', 'Phase', 'Components', 'Number', 'Points: actual', 'Average: actual', 'Rounded', 'Total judgement: actual', 'Points: simulated', 'Average: simulated', 'Rounded', 'Total judgement: simulated', 'Assessed (sum)', 'Expected or better (sum)', '% expected or better', 'Better than expected (sum)', '% better than expected', 'Rounding note'];
+    var r0 = 5, rows = [], st = q(NAMES.settings) + '!';
+    var sm = opt ? opt.model : ctx.base;
+    ctx.base.units.forEach(function (u, i) {
+      if (!u.total) return;
+      var su = sm.units[i], t = u.total, ts = su.total, r = r0 + 1 + rows.length;
+      var b = ctx.parsed.blocks.filter(function (x) { return x.id === u.blockId; })[0], hP = help[b.id] && help[b.id].P;
+      function ptsF(sheet, unit) { var refs = unit.grades.filter(function (g) { return g.r; }).map(function (g) { return q(sheet) + '!' + L(hP) + g.r; }); return refs.length === unit.grades.length && hP ? 'SUM(' + refs.join(',') + ')' : null; }
+      var pa = ptsF(NAMES.actual, u), ps = opt ? ptsF(simName, su) : pa;
+      rows.push([u.block, u.group, u.phase, u.grades.map(function (g) { return g.grade + ' (' + g.judg + ')'; }).join(', '), u.grades.length,
+        pa ? { formula: pa, result: t.sumPts } : t.sumPts, { formula: 'IF(F' + r + '>0,G' + r + '/F' + r + ',"")', result: t.avg },
+        { formula: roundF('H' + r), result: t.rounded }, { formula: 'IFERROR(INDEX(' + st + ctx.pts.names + ',MATCH(I' + r + ',' + st + ctx.pts.pts + ',1)),"")', result: t.judgPoints },
+        ps ? { formula: ps, result: ts.sumPts } : ts.sumPts, { formula: 'IF(F' + r + '>0,K' + r + '/F' + r + ',"")', result: ts.avg },
+        { formula: roundF('L' + r), result: ts.rounded }, { formula: 'IFERROR(INDEX(' + st + ctx.pts.names + ',MATCH(M' + r + ',' + st + ctx.pts.pts + ',1)),"")', result: ts.judgPoints },
+        t.A, t.G, { formula: 'IF(O' + r + '>0,P' + r + '/O' + r + ',0)', result: t.I || 0 }, t.H, { formula: 'IF(O' + r + '>0,R' + r + '/O' + r + ',0)', result: t.J || 0 },
+        (t.roundingFlag || ts.roundingFlag) ? 'Decimal average and no rounding rule supplied: please confirm. Nearest whole point used for now.' : (cfg.rounding === 'unspecified' ? 'Whole-number average, no rounding needed.' : 'Rule: ' + ruleText(cfg.rounding) + '.')]);
+    });
+    if (!rows.length) rows.push(['No phase totals found', '', '', '', '', '', '', '', '', '', '', '', '', '', '', '', '', '', '']);
+    table(ws, r0, 2, heads, rows, {
+      headFills: heads.map(function (_, i) { return i >= 9 && i <= 12 ? C.blue : C.yel; }),
+      fills: function (i) { return i >= 9 && i <= 12 ? C.blue : (i === 18 ? 'FFFFF2CC' : C.cream); },
+      bold: function (i) { return i === 8 || i === 12; }, colors: function (i) { return i >= 9 && i <= 12 ? C.ink : null; },
+      left: { 3: true, 18: true }, fmt: [null, null, null, null, '0', '0', '0.00', '0', null, '0', '0.00', '0', null, '0', '0', '0.0%', '0', '0.0%'],
+      widths: [14, 14, 8, 40, 9, 9, 10, 9, 14, 10, 10, 9, 14, 10, 11, 11, 11, 11, 40], headHeight: 46
+    });
+    ws.getCell(r0 + rows.length + 2, 2).value = 'Points: ' + E.CATS.slice().reverse().filter(function (k) { return cfg.points[k] != null && cfg.points[k] !== ''; }).map(function (k) { return k + ' = ' + cfg.points[k]; }).join(', ') + '. Rounding rule: ' + ruleText(cfg.rounding) + '.';
+    ws.getCell(r0 + rows.length + 2, 2).font = font({ italic: true, color: 'FF595959' });
+  }
+
+  function logSheet(wb, ctx) {
+    var f = E.findFixes(ctx.parsed, ctx.cfg);
+    var ws = titled(wb, NAMES.log, 'Corrections made to the actual results', 'Only verifiable calculation and layout errors were corrected. No student counts were changed. Corrected cells are orange in "' + NAMES.actual + '".', 'FF548235');
+    var rows = f.fixes.map(function (x, i) { return [i + 1, x.r ? 'Row ' + x.r : 'Whole table', x.what, x.detail, x.effect || 'None']; });
+    if (!rows.length) rows = [[1, '', 'No calculation errors found', 'Every count, percentage and judgement already matched the rules.', 'None']];
+    var last = table(ws, 5, 2, ['#', 'Where', 'What was wrong', 'Details', 'Effect on judgement'], rows, { left: { 2: true, 3: true }, widths: [5, 12, 32, 70, 18], fills: [C.cream, C.cream, C.pale, C.cream, C.cream] });
+    ws.getCell(last + 2, 2).value = f.okRows + ' of ' + f.totalRows + ' grade rows were already correct.'; ws.getCell(last + 2, 2).font = font({ italic: true, color: 'FF375623' });
+  }
+
+  function planSheet(wb, ctx, opt) {
+    var cfg = ctx.cfg, ws = titled(wb, NAMES.plan, 'Planning assumptions behind the simulated scenario', 'Hypothetical changes for internal analysis only. They are not findings, and no evidence is claimed for them.', 'FFC00000');
+    if (!opt) { ws.getCell('B5').value = 'The corrected actual results already meet both limits, so no simulated changes were made.'; return; }
+    var rows = opt.cells.map(function (c) {
+      var b = c.from, s = c.to, parts = [];
+      if (c.dG) parts.push((c.dG > 0 ? c.dG + ' more' : -c.dG + ' fewer') + ' of the ' + b.A + ' assessed students make expected or better progress (' + b.G + ' to ' + s.G + ')');
+      if (c.dH) parts.push((c.dH > 0 ? c.dH + ' more' : -c.dH + ' fewer') + ' make better than expected progress (' + b.H + ' to ' + s.H + ')');
+      return [s.block, s.group, s.phase, s.grade, (c.dG ? (c.dG > 0 ? '+' : '') + c.dG : '') + (c.dH ? ' / ' + (c.dH > 0 ? '+' : '') + c.dH : ''), c.pp, b.judg + ' to ' + s.judg, 'Planning assumption: ' + parts.join('; ') + '.', c.pp > cfg.substantialPts ? 'Substantial' : ''];
+    });
+    var last = table(ws, 5, 2, ['Table', 'Group', 'Phase', 'Grade', 'Students changed', 'Percentage points', 'Judgement', 'Assumption', 'Size'], rows,
+      { left: { 7: true }, widths: [14, 14, 8, 10, 12, 12, 22, 70, 13], fmt: [null, null, null, null, null, '0.0'], fills: function (i) { return i === 4 || i === 5 ? C.blue : C.cream; },
+        colors: function (i, j, row) { return i === 8 && row[8] ? 'FFC00000' : (i === 4 ? C.ink : null); }, bold: function (i) { return i === 8; } });
+    var notes = [
+      'Total: ' + opt.students + ' students across ' + opt.cells.length + ' grade' + (opt.cells.length === 1 ? '' : 's') + ' (' + (opt.share * 100).toFixed(1) + '% of all assessed students). Largest change in one grade: ' + opt.maxPts.toFixed(1) + ' percentage points.',
+      opt.substantial ? 'At least one change is above ' + cfg.substantialPts + ' percentage points, which is a substantial adjustment.' : 'No single change is above ' + cfg.substantialPts + ' percentage points.',
+      opt.changed.length + ' judgements change. All other judgements keep their actual values.',
+      'Cohort sizes and assessed-student totals are unchanged. Counts are whole students within the assessed population, and better-than-expected never exceeds expected-or-better.',
+      'Thresholds were not changed. Every judgement is recalculated from the simulated counts using the criteria in Settings.',
+      'Each grade moves only as far as needed, so grades keep different results from each other.'
+    ];
+    notes.forEach(function (t, i) { var x = ws.getCell(last + 2 + i, 2); x.value = '• ' + t; x.font = font({ color: i === 1 && opt.substantial ? 'FFC00000' : 'FF262626', bold: i === 0 }); });
+  }
+
+  /* ---------- a source workbook for pasted or typed data ---------- */
+  function synthetic(rows, title) {
+    var wb = new ExcelJS.Workbook(), ws = wb.addWorksheet('Data');
+    [3, 10, 14, 10, 13, 12, 14, 14, 14, 14, 13].forEach(function (w, i) { ws.getColumn(i + 1).width = w; });
+    ws.mergeCells('B2:K2'); var t = ws.getCell('B2'); t.value = title || 'Progress'; t.font = font({ size: 16, bold: true }); t.fill = fill(C.yel); t.alignment = { horizontal: 'center' };
+    var head = ['Phase', 'Group of Students', 'Grade/Year', 'No. of students in this group', '% Students assessed', 'students that made expected or better progress', 'students that made better than expected progress', '% of students that made expected or better progress', '% of students that made better than expected progress', 'Judgement'];
+    head.forEach(function (h, i) { var x = ws.getCell(3, 2 + i); x.value = h; x.font = font({ bold: true }); x.alignment = { horizontal: 'center', vertical: 'middle', wrapText: true }; x.border = { top: M, bottom: M, left: i === 0 ? M : T, right: i === 9 ? M : T }; x.fill = fill(i === 9 ? C.yel : C.white); });
+    ws.getRow(3).height = 78;
+    var r = 4;
+    rows.forEach(function (x) {
+      [x.phase, x.group || 'All students', x.grade, x.E, x.F == null ? 100 : x.F, x.G, x.H, null, null, null].forEach(function (v, i) {
+        var c = ws.getCell(r, 2 + i); c.value = v; c.alignment = { horizontal: 'center' }; c.fill = fill(i === 3 || i === 5 || i === 6 ? C.yel : C.cream); c.font = font({ bold: i === 3 || i === 5 || i === 6 });
+        c.border = { top: T, bottom: T, left: i === 0 ? M : T, right: i === 9 ? M : T };
+      });
+      r++;
+    });
+    return wb;
+  }
+  function template() {
+    var rows = []; for (var g = 1; g <= 12; g++) rows.push({ phase: null, group: 'All students', grade: 'G' + g, E: null, F: 100, G: null, H: null });
+    var wb = synthetic(rows, 'Subject name');
+    var ws = wb.getWorksheet('Data'); ws.name = 'Progress';
+    ws.getCell('B17').value = 'Fill in the phase, the number of students and the two progress counts. Add a "Total" row after each phase if you like; the page adds them up either way.';
+    ws.getCell('B17').font = font({ italic: true, color: 'FF595959' });
+    return wb;
+  }
+
+  return { build: build, synthetic: synthetic, template: template, NAMES: NAMES, simSheetName: simSheetName };
+})(Engine);
+if (typeof module !== 'undefined') module.exports = Book;

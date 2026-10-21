@@ -18,9 +18,11 @@ var Book = (function (E) {
   function q(name) { return "'" + name.replace(/'/g, "''") + "'"; }
   function setup(ws) { ws.pageSetup = { orientation: 'landscape', fitToPage: true, fitToWidth: 1, fitToHeight: 0, paperSize: 9 }; }
 
-  function clone(dst, src, name) {
+  function clone(dst, src, name, noNotes) {
     var ws = dst.addWorksheet(name);
     var model = JSON.parse(JSON.stringify(src.model));
+    // Simulated sheets carry no cell comments (see changePanel): drop the ones copied from the school's sheet.
+    if (noNotes) (model.rows || []).forEach(function (r) { (r.cells || []).forEach(function (c) { delete c.comment; }); });
     model.name = name; model.mergeCells = model.merges || [];
     delete model.id; model.tables = []; model.media = []; model.conditionalFormattings = model.conditionalFormattings || []; model.dataValidations = model.dataValidations || {};
     ws.model = Object.assign(model, { id: ws.id });
@@ -224,18 +226,20 @@ var Book = (function (E) {
     });
     return helpers;
   }
-  function banner(ws, ctx, text, color, help) {
+  function banner(ws, ctx, text, color, help, tight) {
     var b = ctx.parsed.blocks[0], minC = Infinity, maxC = 0;
     ctx.parsed.blocks.forEach(function (bb) { Object.keys(bb.col).forEach(function (k) { if (bb.col[k] != null) { minC = Math.min(minC, bb.col[k]); maxC = Math.max(maxC, bb.col[k]); } }); });
     var hx = 0; Object.keys(help || {}).forEach(function (id) { Object.keys(help[id]).forEach(function (k) { if (help[id][k] > hx) hx = help[id][k]; }); });
-    maxC = Math.max(maxC + 3, hx);
+    // Simulated sheets: exactly as wide as the table (their working columns are folded away).
+    if (!tight) maxC = Math.max(maxC + 3, hx);
     var row1Free = true;
     for (var c = minC; c <= maxC; c++) { var v = ws.getCell(1, c).value; if (v != null && v !== '') row1Free = false; }
     if (row1Free && b.headerRow > 1) {
       (ws.model.merges || []).forEach(function (m) { if (/^[A-Z]+1:/.test(m)) { try { ws.unMergeCells(m); } catch (e) { } } });
       try { ws.mergeCells(1, minC, 1, maxC); } catch (e) { }
-      var x = ws.getCell(1, minC); x.value = text; x.font = font({ size: 11, bold: true, color: C.white }); x.fill = fill(color); x.alignment = { horizontal: 'center', vertical: 'middle' };
-      ws.getRow(1).height = 22;
+      var x = ws.getCell(1, minC); x.value = text; x.font = font({ size: 11, bold: true, color: C.white }); x.fill = fill(color); x.alignment = { horizontal: 'center', vertical: 'middle', wrapText: true };
+      var w = 0; for (var cw = minC; cw <= maxC; cw++) if (!ws.getColumn(cw).hidden) w += ws.getColumn(cw).width || 9;
+      ws.getRow(1).height = text.length * 1.15 > w ? 34 : 22;
     } else {
       var y = ws.getCell(b.headerRow, maxC + 2); y.value = text; y.font = font({ bold: true, color: C.white }); y.fill = fill(color); ws.getColumn(maxC + 2).width = 48;
     }
@@ -297,6 +301,13 @@ var Book = (function (E) {
     if (lastChange >= first) { var tt = put(r, 5, { formula: 'SUM(' + CL(5) + first + ':' + CL(5) + lastChange + ')', result: o.cells.reduce(function (a, x) { return a + x.dG + x.dH; }, 0) }, '+0;-0;0'); tt.font = font({ bold: true, color: C.chgInk, size: 12 }); }
     var jc = put(r, 10, o.changed.length + ' judgements'); jc.font = font({ bold: true });
     for (var q3 = 0; q3 < NC; q3++) ws.getCell(r, COLS[q3]).border = { top: M, bottom: M, left: T, right: T };
+    // ExcelJS writes cell comments after the data bars, an order Excel rejects (it then drops the sheet).
+    // Simulated cells already show "(was …)", so the comments are left out of simulated sheets.
+    ws.eachRow({ includeEmpty: true }, function (row) { row.eachCell({ includeEmpty: true }, function (cell) {
+      cell._comment = undefined;
+      // ExcelJS also caches the comment in the cell's value model once the sheet model has been read.
+      var vm = cell._value && cell._value.model; if (vm && vm.comment) delete vm.comment;
+    }); });
     if (lastChange >= first) ws.addConditionalFormatting({ ref: CL(5) + first + ':' + CL(5) + lastChange, rules: [{ type: 'dataBar', priority: 1, gradient: false, cfvo: [{ type: 'num', value: 0 }, { type: 'max' }], color: { argb: C.chgBar } }] });
   }
 
@@ -344,19 +355,19 @@ var Book = (function (E) {
     var origSrc = (ctx.origWb && ctx.origWb.getWorksheet(ctx.sheetName)) || src;
     var o = clone(wb, origSrc, NAMES.orig); o.properties.tabColor = { argb: C.grey };
     var a = clone(wb, src, NAMES.actual); a.properties.tabColor = { argb: C.green };
-    var s = opt ? clone(wb, src, simName) : null; if (s) s.properties.tabColor = { argb: C.red };
+    var s = opt ? clone(wb, src, simName, true) : null; if (s) s.properties.tabColor = { argb: C.red };
     var pts = settingsSheet(wb, cfg); ctx.pts = pts;
     var help = writeTable(a, ctx, 'actual', ctx.base, null);
     banner(a, ctx, 'ACTUAL RESULTS, corrected. Orange cells were fixed (see Corrections log).', C.green, help);
-    var SIM_KEY = ' Green cells are the simulated changes; each shows the actual value it replaces. Every change is listed under the table.';
-    if (s) { var helpS = writeTable(s, ctx, 'sim', opt.model, ctx.base, help); banner(s, ctx, String(cfg.simTitle).toUpperCase() + ' (Option ' + String.fromCharCode(65 + (ctx.sel || 0)) + ').' + SIM_KEY, C.red, helpS); changePanel(s, ctx, opt, ctx.sel || 0, helpS, help); }
+    var SIM_KEY = ' Green = simulated change, showing the actual value it replaces. All changes are listed below.';
+    if (s) { var helpS = writeTable(s, ctx, 'sim', opt.model, ctx.base, help); banner(s, ctx, String(cfg.simTitle).toUpperCase() + ' (Option ' + String.fromCharCode(65 + (ctx.sel || 0)) + ').' + SIM_KEY, C.red, helpS, true); changePanel(s, ctx, opt, ctx.sel || 0, helpS, help); }
     // Every other option gets its own sheet in the same layout, like the original audited workbook.
     var optNames = [];
     if (opt) (ctx.sim.options || []).slice(0, 6).forEach(function (o, i) {
       if (i === (ctx.sel || 0)) return;
-      var nm = 'Option ' + String.fromCharCode(65 + i) + ' (SIMULATED)', w = clone(wb, src, nm); w.properties.tabColor = { argb: C.red };
+      var nm = 'Option ' + String.fromCharCode(65 + i) + ' (SIMULATED)', w = clone(wb, src, nm, true); w.properties.tabColor = { argb: C.red };
       var hh = writeTable(w, ctx, 'sim', o.model, ctx.base, help);
-      banner(w, ctx, 'SIMULATED, NOT ACTUAL RESULTS. Option ' + String.fromCharCode(65 + i) + '.' + SIM_KEY, C.red, hh);
+      banner(w, ctx, 'SIMULATED, NOT ACTUAL RESULTS (Option ' + String.fromCharCode(65 + i) + ').' + SIM_KEY, C.red, hh, true);
       changePanel(w, ctx, o, i, hh, help);
       optNames.push(nm);
     });

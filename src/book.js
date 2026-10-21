@@ -2,7 +2,7 @@
    then corrected (actual) and simulated versions get formulas, highlights and notes. */
 var Book = (function (E) {
   var T = { style: 'thin', color: { argb: 'FF000000' } }, M = { style: 'medium', color: { argb: 'FF000000' } };
-  var C = { yel: 'FFFFFF00', cream: 'FFFEF2CB', pale: 'FFFEFFB3', blue: 'FFDFE3FF', ink: 'FF0000B8', orange: 'FFFCE4D6', green: 'FF548235', red: 'FFC00000', grey: 'FF808080', white: 'FFFFFFFF', head: 'FF1F3864' };
+  var C = { yel: 'FFFFFF00', cream: 'FFFEF2CB', pale: 'FFFEFFB3', blue: 'FFDFE3FF', ink: 'FF0000B8', orange: 'FFFCE4D6', green: 'FF548235', red: 'FFC00000', grey: 'FF808080', white: 'FFFFFFFF', head: 'FF1F3864', chg: 'FFC6EFCE', chgInk: 'FF006100', chgBar: 'FF63BE7B' };
   function fill(a) { return { type: 'pattern', pattern: 'solid', fgColor: { argb: a } }; }
   function font(o) { o = o || {}; var f = { name: 'Calibri', size: o.size || 10, bold: !!o.bold, italic: !!o.italic }; if (o.color) f.color = { argb: o.color }; return f; }
   var L = E.colLetter;
@@ -100,16 +100,17 @@ var Book = (function (E) {
       var nx = maxC + 1, hA = nx++, hP = nx++, hK = c.K || nx++;
       var dG = c.G == null, dH = c.H == null, hG = dG ? nx++ : c.G, hH = dH ? nx++ : c.H;
       var hReal = null, hChg = null;
-      if (mode === 'sim' && tabRef && tabRef[b.id]) { hReal = nx++; hChg = nx++; }
+      // (the actual value and the change are shown in the changed cells and in the list under the table)
       var colOf = { E: c.E, G: hG, H: hH };
       helpers[b.id] = { A: hA, P: hP, K: hK, G: hG, H: hH };
       taken.push({ r1: b.headerRow, r2: b.endRow, c2: nx - 1 });
+      // On simulated sheets the working columns are folded away (+ above the columns shows them), so the table reads like the school's own.
+      if (mode === 'sim') [hA, hP, hK, hG, hH].forEach(function (col) { if (col > maxC) { ws.getColumn(col).outlineLevel = 1; ws.getColumn(col).hidden = true; } });
       var hr = b.headerRow;
       var heads = [[hA, 'Assessed students (calculated)'], [hP, 'Points (component) / average (total)']];
       if (!c.K) heads.push([hK, 'Judgement (calculated)']);
       if (dG) heads.push([hG, 'Expected or better, students (worked out from %)']);
       if (dH) heads.push([hH, 'Better than expected, students (worked out from %)']);
-      if (hReal) heads.push([hReal, 'Actual value: expected or better (students)'], [hChg, 'Simulated change']);
       heads.forEach(function (h) {
         var x = ws.getCell(hr, h[0]); x.value = (b.wide ? b.title + ': ' : '') + h[1]; x.font = font({ bold: true, color: 'FF595959', size: 9 }); x.fill = fill('FFF2F2F2');
         x.alignment = { horizontal: 'center', vertical: 'middle', wrapText: true }; x.border = { top: M, bottom: M, left: T, right: T };
@@ -118,6 +119,14 @@ var Book = (function (E) {
       function cellRef(col, r) { return L(col) + r; }
       function setF(col, r, f, result, fmt) { var x = ws.getCell(r, col); x.value = { formula: f, result: result }; if (fmt) x.numFmt = fmt; return x; }
       function styleHelper(x, isT) { x.font = font({ bold: isT, color: 'FF595959' }); x.fill = fill('FFF7F7F7'); x.alignment = { horizontal: 'center', vertical: 'middle' }; x.border = { top: T, bottom: T, left: T, right: T }; }
+      // A simulated change: bright green, bold, and the cell itself shows the actual value it replaces.
+      function markChanged(x, kind, was, col) {
+        x.fill = fill(C.chg); x.font = font({ bold: true, color: C.chgInk });
+        var w = kind === 'p' ? (was == null ? '' : (Math.round(was * 1000) / 10).toFixed(1) + '%') : String(was == null ? '' : (typeof was === 'number' ? E.fmt(was) : was)).replace(/"/g, '');
+        x.numFmt = kind === 'p' ? '0.0%" (was ' + w + ')"' : kind === 'j' ? 'General;General;General;@" (was ' + w + ')"' : '0" (was ' + w + ')"';
+        var need = kind === 'j' ? 24 : 16;
+        if (col && (ws.getColumn(col).width || 9) < need) ws.getColumn(col).width = need;
+      }
       // grade rows
       b.rows.forEach(function (x0) {
         var id = b.id + ':' + x0.r, it = byId[id], bi = baseById[id]; if (!it) return;
@@ -131,7 +140,7 @@ var Book = (function (E) {
           if (mode === 'actual' && pc && x0[k] == null) cell = setF(colOf[k], r, 'ROUND(IF(' + pc + '>1,' + pc + '/100,' + pc + ')*' + aRef + ',0)', it[k], '0');
           else { cell = ws.getCell(r, colOf[k]); cell.value = it[k]; cell.numFmt = '0'; }
           styleHelper(cell, false);
-          if (changed) { cell.fill = fill(C.blue); cell.font = font({ bold: true, color: C.ink }); cell.note = 'SIMULATED (planning assumption). Actual value ' + E.fmt(bi[k]) + ', change ' + (it[k] - bi[k] > 0 ? '+' : '') + E.fmt(it[k] - bi[k]) + '.'; }
+          if (changed) { markChanged(cell, 'n', bi[k], colOf[k]); cell.note = 'SIMULATED (planning assumption). Actual value ' + E.fmt(bi[k]) + ', change ' + (it[k] - bi[k] > 0 ? '+' : '') + E.fmt(it[k] - bi[k]) + '.'; }
           else if (mode === 'actual') cell.note = 'Worked out from the percentage x assessed students, rounded to whole students.';
         });
         ['E', 'G', 'H'].forEach(function (k) {
@@ -139,22 +148,17 @@ var Book = (function (E) {
           var cell = ws.getCell(r, c[k]), srcV = x0.orig ? x0.orig[k] : x0[k];
           if (it[k] !== srcV && it[k] != null) {
             cell.value = it[k];
-            if (mode === 'sim' && bi && it[k] !== bi[k]) { cell.fill = fill(C.blue); cell.font = font({ bold: true, color: C.ink }); cell.note = 'SIMULATED (planning assumption). Actual value ' + E.fmt(bi[k]) + ', change ' + (it[k] - bi[k] > 0 ? '+' : '') + E.fmt(it[k] - bi[k]) + '.'; }
+            if (mode === 'sim' && bi && it[k] !== bi[k]) { markChanged(cell, 'n', bi[k], c[k]); cell.note = 'SIMULATED (planning assumption). Actual value ' + E.fmt(bi[k]) + ', change ' + (it[k] - bi[k] > 0 ? '+' : '') + E.fmt(it[k] - bi[k]) + '.'; }
             else if (bi && it[k] === bi[k] && it[k] !== srcV) { cell.note = 'Edited on the page. File value ' + E.fmt(srcV) + '.'; }
           }
         });
         var aF = (cfg.useAssessed && c.F != null) ? 'ROUND(' + cellRef(c.E, r) + '*IF(' + cellRef(c.F, r) + '>1,' + cellRef(c.F, r) + '/100,' + cellRef(c.F, r) + '),0)' : cellRef(c.E, r);
         styleHelper(setF(hA, r, aF, it.A, '0'), false);
-        if (c.I != null && !(dG && mode === 'actual')) { var xi = setF(c.I, r, 'IF(' + aRef + '>0,' + gRef + '/' + aRef + ',0)', it.I || 0, '0.0%'); if (mode === 'sim' && bi && it.G !== bi.G) { xi.fill = fill(C.blue); xi.font = font({ bold: true, color: C.ink }); } }
-        if (c.J != null && !(dH && mode === 'actual')) { var xj = setF(c.J, r, 'IF(' + aRef + '>0,' + hRef + '/' + aRef + ',0)', it.J || 0, '0.0%'); if (mode === 'sim' && bi && it.H !== bi.H) { xj.fill = fill(C.blue); xj.font = font({ bold: true, color: C.ink }); } }
-        if (hReal) {
-          var realRef = q(NAMES.actual) + '!' + L(tabRef[b.id].G) + r, xr = setF(hReal, r, realRef, bi ? bi.G : it.G, '0'), xc = setF(hChg, r, gRef + '-' + cellRef(hReal, r), it.G - (bi ? bi.G : it.G), '+0;-0;0');
-          styleHelper(xr, false); styleHelper(xc, false);
-          if (bi && it.G !== bi.G) { xc.fill = fill(C.blue); xc.font = font({ bold: true, color: C.ink }); }
-        }
+        if (c.I != null && !(dG && mode === 'actual')) { var xi = setF(c.I, r, 'IF(' + aRef + '>0,' + gRef + '/' + aRef + ',0)', it.I || 0, '0.0%'); if (mode === 'sim' && bi && it.G !== bi.G) markChanged(xi, 'p', bi.I, c.I); }
+        if (c.J != null && !(dH && mode === 'actual')) { var xj = setF(c.J, r, 'IF(' + aRef + '>0,' + hRef + '/' + aRef + ',0)', it.J || 0, '0.0%'); if (mode === 'sim' && bi && it.H !== bi.H) markChanged(xj, 'p', bi.J, c.J); }
         var xk = setF(hK, r, judgeF(aRef, gRef, hRef), it.judg);
         if (!c.K) styleHelper(xk, false);
-        if (mode === 'sim' && bi && it.judg !== bi.judg) { xk.fill = fill(C.blue); xk.font = font({ bold: true, color: C.ink }); xk.note = 'SIMULATED. Actual judgement: ' + bi.judg + '.'; }
+        if (mode === 'sim' && bi && it.judg !== bi.judg) { markChanged(xk, 'j', bi.judg, hK); xk.note = 'SIMULATED. Actual judgement: ' + bi.judg + '.'; }
         else if (mode === 'actual' && x0.K && x0.K !== it.judg) { xk.fill = fill(C.orange); xk.note = 'Corrected. The file said ' + x0.K + '.'; }
         if (mode === 'actual') {
           if (!dG && c.I != null && x0.I != null && Math.abs(x0.I - (it.I || 0)) > 5e-5) { ws.getCell(r, c.I).fill = fill(C.orange); ws.getCell(r, c.I).note = 'Corrected. The file said ' + E.pct(x0.I, 2) + '.'; }
@@ -178,17 +182,16 @@ var Book = (function (E) {
           var x = setF(colOf[k], r, sumF(colOf[k]), it[k], '0');
           if (colOf[k] !== c[k]) styleHelper(x, true);
           if (mode === 'actual' && c[k] != null && t0[k] != null && Math.abs(t0[k] - it[k]) > 1e-6) { x.fill = fill(C.orange); x.note = 'Corrected. The file said ' + E.fmt(t0[k]) + ' (it should be the sum of the rows).'; fixed[k] = 1; }
-          if (mode === 'sim' && bi && it[k] !== bi[k]) { x.fill = fill(C.blue); x.font = font({ bold: true, color: C.ink }); x.note = 'Changes because its rows changed. Actual ' + E.fmt(bi[k]) + '.'; }
+          if (mode === 'sim' && bi && it[k] !== bi[k]) { markChanged(x, 'n', bi[k], colOf[k]); x.note = 'Changes because its rows changed. Actual ' + E.fmt(bi[k]) + '.'; }
         });
         var aRef = cellRef(hA, r);
         styleHelper(setF(hA, r, sumF(hA), it.A, '0'), true);
-        if (hReal) { styleHelper(setF(hReal, r, sumF(hReal), bi ? bi.G : it.G, '0'), true); var xct = setF(hChg, r, sumF(hChg), it.G - (bi ? bi.G : it.G), '+0;-0;0'); styleHelper(xct, true); if (bi && it.G !== bi.G) { xct.fill = fill(C.blue); xct.font = font({ bold: true, color: C.ink }); } }
         ['I', 'J'].forEach(function (k) {
           if (c[k] == null) return;
           var cnt = k === 'I' ? hG : hH, v = k === 'I' ? it.I : it.J;
           var x = setF(c[k], r, 'IF(' + aRef + '>0,' + L(cnt) + r + '/' + aRef + ',0)', v || 0, '0.0%');
           if (mode === 'actual' && !(k === 'I' ? dG : dH) && t0[k] != null && Math.abs(t0[k] - (v || 0)) > 5e-5) { x.fill = fill(C.orange); x.note = 'Corrected. The file said ' + E.pct(t0[k], 2) + ' (a simple average, not total divided by total).'; }
-          if (mode === 'sim' && bi && Math.abs((v || 0) - ((k === 'I' ? bi.I : bi.J) || 0)) > 1e-9) { x.fill = fill(C.blue); x.font = font({ bold: true, color: C.ink }); }
+          if (mode === 'sim' && bi && Math.abs((v || 0) - ((k === 'I' ? bi.I : bi.J) || 0)) > 1e-9) markChanged(x, 'p', k === 'I' ? bi.I : bi.J, c[k]);
         });
         // points average and total judgement
         var pRange = contiguous ? L(hP) + mem[0] + ':' + L(hP) + mem[mem.length - 1] : mem.map(function (m) { return L(hP) + m; }).join(',');
@@ -200,7 +203,7 @@ var Book = (function (E) {
         var xk = setF(hK, r, kf, it.judg);
         if (!c.K) styleHelper(xk, true);
         if (mode === 'actual' && t0.K && t0.K !== it.judg) { xk.fill = fill(C.orange); xk.note = 'Corrected. The file said ' + t0.K + '.'; }
-        if (mode === 'sim' && bi && it.judg !== bi.judg) { xk.fill = fill(C.blue); xk.font = font({ bold: true, color: C.ink }); xk.note = 'SIMULATED. Actual judgement: ' + bi.judg + '.'; }
+        if (mode === 'sim' && bi && it.judg !== bi.judg) { markChanged(xk, 'j', bi.judg, hK); xk.note = 'SIMULATED. Actual judgement: ' + bi.judg + '. It changes because its grades changed.'; }
       });
       // phase label fix: re-merge the phase column per unit when labels were out of place
       if (c.phase != null && fixes.some(function (f) { return f.kind === 'label'; })) {
@@ -236,6 +239,65 @@ var Book = (function (E) {
     } else {
       var y = ws.getCell(b.headerRow, maxC + 2); y.value = text; y.font = font({ bold: true, color: C.white }); y.fill = fill(color); ws.getColumn(maxC + 2).width = 48;
     }
+  }
+
+  /* ---------- the list of changes under a simulated table ---------- */
+  function changePanel(ws, ctx, o, idx, help, actHelp) {
+    var multi = ctx.parsed.blocks.length > 1, act = q(NAMES.actual) + '!', letter = String.fromCharCode(65 + idx);
+    var minC = Infinity, last = 0;
+    ctx.parsed.blocks.forEach(function (b) { Object.keys(b.col).forEach(function (k) { if (b.col[k] != null) minC = Math.min(minC, b.col[k]); }); last = Math.max(last, b.endRow); });
+    ws.eachRow({ includeEmpty: false }, function (row, r) { row.eachCell({ includeEmpty: false }, function (cell, c) { if (!ws.getColumn(c).hidden && cell.value != null && cell.value !== '') last = Math.max(last, r); }); });
+    var c0 = minC === Infinity ? 1 : minC, r = last + 3, NC = 11;
+    var heads = [multi ? 'Subject' : 'Table', 'Grade', 'What changed', 'Actual (students)', 'Simulated (students)', 'Change (students)', 'Actual %', 'Simulated %', 'Change (% points)', 'Judgement: actual', 'Judgement: simulated'];
+    // The list uses the visible columns from the table's first column on (folded working columns are skipped).
+    var COLS = [], W = [14, 17, 25, 11, 11, 11, 10, 10, 11, 14, 16];
+    for (var cc0 = c0; COLS.length < NC; cc0++) if (!ws.getColumn(cc0).hidden) COLS.push(cc0);
+    COLS.forEach(function (cn, k) { var col = ws.getColumn(cn); if ((col.width || 9) < W[k]) col.width = W[k]; });
+    function CL(k) { return L(COLS[k]); }
+    function mergeRow(rr, a, z) { try { ws.mergeCells(rr, COLS[a], rr, COLS[z]); } catch (e) { } }
+    function put(rr, cc, v, f) { var x = ws.getCell(rr, COLS[cc]); x.value = v; x.style = {}; x.border = { top: T, bottom: T, left: T, right: T }; x.alignment = { vertical: 'middle', horizontal: cc < 3 ? 'left' : 'center', wrapText: true }; x.font = font({}); if (f) x.numFmt = f; return x; }
+    mergeRow(r, 0, NC - 1);
+    var t = ws.getCell(r, c0); t.value = 'WHAT THE SIMULATION CHANGES: OPTION ' + letter + ' (SIMULATED, NOT ACTUAL RESULTS)'; t.font = font({ bold: true, size: 12, color: C.white }); t.fill = fill(C.red); t.alignment = { vertical: 'middle', horizontal: 'left', indent: 1 }; ws.getRow(r).height = 22;
+    r++;
+    mergeRow(r, 0, NC - 1);
+    var big = o.cells.slice().sort(function (a, z) { return (Math.abs(z.dG) + Math.abs(z.dH)) / (z.to.A || 1) - (Math.abs(a.dG) + Math.abs(a.dH)) / (a.to.A || 1); })[0];
+    var sm = ws.getCell(r, c0);
+    sm.value = o.changed.length + ' judgement' + (o.changed.length === 1 ? '' : 's') + ' change by moving ' + o.students + ' student' + (o.students === 1 ? '' : 's') + ' in ' + o.cells.length + ' grade' + (o.cells.length === 1 ? '' : 's') + ' (' + (Math.round(o.share * 1000) / 10).toFixed(1) + '% of assessed students). Largest change in one grade: ' + o.maxPts.toFixed(1) + ' percentage points' + (big ? ' (' + (multi ? big.to.block + ' ' : '') + big.to.grade + ')' : '') + (o.substantial ? ', which is a substantial adjustment.' : '.') + ' These are planning assumptions, not actual results.';
+    sm.font = font({ size: 11 }); sm.alignment = { wrapText: true, vertical: 'top', horizontal: 'left', indent: 1 }; ws.getRow(r).height = 34;
+    r += 2;
+    heads.forEach(function (h, i) { var x = put(r, i, h); x.font = font({ bold: true, color: C.white, size: 10 }); x.fill = fill(C.head); x.alignment = { horizontal: 'center', vertical: 'middle', wrapText: true }; });
+    ws.getRow(r).height = 30; var first = r + 1;
+    function rowFor(x, k) {
+      var hb = help[x.to.blockId], ha = actHelp[x.to.blockId]; if (!hb || !ha) return;
+      r++; var rr = x.to.r, kk = k === 'G' ? 'I' : 'J';
+      put(r, 0, x.to.block); put(r, 1, x.to.grade + (x.to.phase ? ' (' + E.phaseLabel(x.to.phase) + ')' : ''));
+      put(r, 2, k === 'G' ? 'Expected progress or better' : 'Better than expected');
+      put(r, 3, { formula: act + L(ha[k]) + rr, result: x.from[k] }, '0');
+      var sv = put(r, 4, { formula: L(hb[k]) + rr, result: x.to[k] }, '0'); sv.fill = fill(C.chg); sv.font = font({ bold: true, color: C.chgInk });
+      var ch = put(r, 5, { formula: CL(4) + r + '-' + CL(3) + r, result: x.to[k] - x.from[k] }, '+0;-0;0'); ch.font = font({ bold: true, color: C.chgInk, size: 12 });
+      put(r, 6, { formula: 'IF(' + L(hb.A) + rr + '>0,' + CL(3) + r + '/' + L(hb.A) + rr + ',0)', result: x.from[kk] || 0 }, '0.0%');
+      var sp = put(r, 7, { formula: 'IF(' + L(hb.A) + rr + '>0,' + CL(4) + r + '/' + L(hb.A) + rr + ',0)', result: x.to[kk] || 0 }, '0.0%'); sp.fill = fill(C.chg); sp.font = font({ bold: true, color: C.chgInk });
+      put(r, 8, { formula: '(' + CL(7) + r + '-' + CL(6) + r + ')*100', result: ((x.to[kk] || 0) - (x.from[kk] || 0)) * 100 }, '+0.0;-0.0;0.0');
+      var same = x.from.judg === x.to.judg;
+      put(r, 9, { formula: act + L(ha.K) + rr, result: x.from.judg });
+      var js = put(r, 10, { formula: L(hb.K) + rr, result: x.to.judg }); if (!same) { js.fill = fill(C.chg); js.font = font({ bold: true, color: C.chgInk }); }
+    }
+    o.cells.forEach(function (x) { if (x.dG) rowFor(x, 'G'); if (x.dH) rowFor(x, 'H'); });
+    var lastChange = r;
+    o.changed.filter(function (x) { return x.from.kind === 'total'; }).forEach(function (x) {
+      var hb = help[x.to.blockId], ha = actHelp[x.to.blockId]; if (!hb || !ha || !x.to.r) return;
+      r++; put(r, 0, x.to.block); put(r, 1, x.to.label || 'Total'); put(r, 2, 'Knock-on from its grades');
+      for (var q2 = 3; q2 <= 8; q2++) { var e = put(r, q2, null); e.fill = fill('FFF2F2F2'); }
+      put(r, 9, { formula: act + L(ha.K) + x.to.r, result: x.from.judg });
+      var js = put(r, 10, { formula: L(hb.K) + x.to.r, result: x.to.judg }); js.fill = fill(C.chg); js.font = font({ bold: true, color: C.chgInk });
+    });
+    r++;
+    var tl = put(r, 0, 'All changes'); tl.font = font({ bold: true });
+    mergeRow(r, 0, 2);
+    if (lastChange >= first) { var tt = put(r, 5, { formula: 'SUM(' + CL(5) + first + ':' + CL(5) + lastChange + ')', result: o.cells.reduce(function (a, x) { return a + x.dG + x.dH; }, 0) }, '+0;-0;0'); tt.font = font({ bold: true, color: C.chgInk, size: 12 }); }
+    var jc = put(r, 10, o.changed.length + ' judgements'); jc.font = font({ bold: true });
+    for (var q3 = 0; q3 < NC; q3++) ws.getCell(r, COLS[q3]).border = { top: M, bottom: M, left: T, right: T };
+    if (lastChange >= first) ws.addConditionalFormatting({ ref: CL(5) + first + ':' + CL(5) + lastChange, rules: [{ type: 'dataBar', priority: 1, gradient: false, cfvo: [{ type: 'num', value: 0 }, { type: 'max' }], color: { argb: C.chgBar } }] });
   }
 
   /* ---------- plain formatted tables ---------- */
@@ -286,14 +348,16 @@ var Book = (function (E) {
     var pts = settingsSheet(wb, cfg); ctx.pts = pts;
     var help = writeTable(a, ctx, 'actual', ctx.base, null);
     banner(a, ctx, 'ACTUAL RESULTS, corrected. Orange cells were fixed (see Corrections log).', C.green, help);
-    if (s) { var helpS = writeTable(s, ctx, 'sim', opt.model, ctx.base, help); banner(s, ctx, String(cfg.simTitle).toUpperCase() + ' (Option ' + String.fromCharCode(65 + (ctx.sel || 0)) + '). Blue cells are planning assumptions.', C.red, helpS); }
+    var SIM_KEY = ' Green cells are the simulated changes; each shows the actual value it replaces. Every change is listed under the table.';
+    if (s) { var helpS = writeTable(s, ctx, 'sim', opt.model, ctx.base, help); banner(s, ctx, String(cfg.simTitle).toUpperCase() + ' (Option ' + String.fromCharCode(65 + (ctx.sel || 0)) + ').' + SIM_KEY, C.red, helpS); changePanel(s, ctx, opt, ctx.sel || 0, helpS, help); }
     // Every other option gets its own sheet in the same layout, like the original audited workbook.
     var optNames = [];
     if (opt) (ctx.sim.options || []).slice(0, 6).forEach(function (o, i) {
       if (i === (ctx.sel || 0)) return;
       var nm = 'Option ' + String.fromCharCode(65 + i) + ' (SIMULATED)', w = clone(wb, src, nm); w.properties.tabColor = { argb: C.red };
       var hh = writeTable(w, ctx, 'sim', o.model, ctx.base, help);
-      banner(w, ctx, 'SIMULATED, NOT ACTUAL RESULTS. Option ' + String.fromCharCode(65 + i) + ': ' + o.students + ' more students, ' + o.changed.length + ' judgements change.', C.red, hh);
+      banner(w, ctx, 'SIMULATED, NOT ACTUAL RESULTS. Option ' + String.fromCharCode(65 + i) + '.' + SIM_KEY, C.red, hh);
+      changePanel(w, ctx, o, i, hh, help);
       optNames.push(nm);
     });
     criteriaSheet(wb, ctx);
@@ -515,8 +579,8 @@ var Book = (function (E) {
     rows.pop();
     table(ws, 5, 2, ['Option', 'Grade', 'Actual value', 'Simulated value', 'Change', 'Result before', 'Result after'], rows, {
       widths: [18, 26, 13, 15, 10, 15, 18], fmt: [null, null, '0', '0', '+0;-0;0'],
-      fills: function (i, j, row) { return !row[0] ? C.white : (i === 3 || i === 4 ? C.blue : C.cream); },
-      colors: function (i, j, row) { return totals.indexOf(j) >= 0 ? 'FFC00000' : (i === 4 ? C.ink : null); }, bold: function (i, j) { return totals.indexOf(j) >= 0; }, left: { 0: true, 1: true } });
+      fills: function (i, j, row) { return !row[0] ? C.white : (i === 3 || i === 4 || (i === 6 && row[5] !== row[6]) ? C.chg : C.cream); },
+      colors: function (i, j, row) { return totals.indexOf(j) >= 0 ? 'FFC00000' : (i === 4 || i === 3 || i === 6 ? C.chgInk : null); }, bold: function (i, j) { return totals.indexOf(j) >= 0; }, left: { 0: true, 1: true } });
     ws.views = [{ state: 'frozen', ySplit: 5 }];
   }
 

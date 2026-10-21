@@ -37,7 +37,10 @@
       (c.simLocked || []).forEach(function (id) { if (gById[id]) o.simulationLimits.gradesLeftAlone.push({ grade: gById[id].grade, row: gById[id].r }); });
       Object.keys(c.simPinned || {}).forEach(function (id) { var g = gById[id]; if (g) o.simulationLimits.ownChanges.push({ grade: g.grade, row: g.r, expectedOrBetter: c.simPinned[id].G, betterThanExpected: c.simPinned[id].H }); });
       var k = E.check(E.counted(st.base.items, c.basis), c);
-      o.actual = { counted: k.n, weak: k.weak, weakAllowed: k.maxW, outstanding: k.out, outstandingAllowed: k.maxO, extraRules: k.extra.map(function (x) { return x.label + ': ' + x.count + (x.ok ? ' (met)' : ' (not met)'); }) };
+      var lvl = function (basis) { var q = E.check(E.counted(st.base.items, basis), c); return { judgements: q.n, counts: q.d.counts, weak: q.weak, weakAllowedIfCountedAlone: q.maxW, outstanding: q.out }; };
+      o.byLevel = { grades: lvl('grades'), phaseTotals: lvl('phases'), countedTowardLimits: c.basis };
+      if (st.sim && st.sim.options && st.sim.options[st.sel]) { var om = st.sim.options[st.sel].model; o.byLevelSimulated = { grades: E.dist(E.counted(om.items, 'grades')).counts, phaseTotals: E.dist(E.counted(om.items, 'phases')).counts }; }
+      o.actual = { counted: k.n, weak: k.weak, weakAllowed: k.maxW, outstanding: k.out, outstandingAllowed: k.maxO, counts: k.d.counts, extraRules: k.extra.map(function (x) { return x.label + ': ' + x.count + (x.ok ? ' (met)' : ' (not met)'); }) };
       o.fixes = E.findFixes(st.parsed, c).fixes.map(function (f) { return f.what + ': ' + f.detail; });
       if (st.sim) o.simulation = !st.sim.needed ? 'not needed' : st.sim.failed ? (st.sim.limited ? 'not possible inside the simulation limits' : 'not possible with these rules') : st.sim.options.map(function (op, i) { return { option: String.fromCharCode(65 + i), selected: i === st.sel, students: op.students, judgementChanges: op.changed.length, largestChangePoints: +op.maxPts.toFixed(1), grades: op.cells.map(function (x) { return x.to.grade + ' (row ' + x.to.r + ') ' + (x.dG ? (x.dG > 0 ? '+' : '') + x.dG + ' expected' : '') + (x.dH ? ' ' + (x.dH > 0 ? '+' : '') + x.dH + ' better' : ''); }), extraRulesNotMet: op.check.extra.filter(function (x) { return !x.ok; }).map(function (x) { return x.label; }) }; });
     } else if (st.grid) o.problem = 'No progress table was recognised with the current settings.';
@@ -267,15 +270,26 @@
   document.addEventListener('keydown', function (e) { if (e.key === 'Escape' && isOpen()) openPanel(false); });
   // Small, safe Markdown: **bold**, bullet lists, paragraphs. Everything is escaped first.
   function md(text) {
-    var lines = esc(String(text || '')).split('\n'), html = '', list = 0;
+    // Pipe tables first (blank lines between rows are tolerated), then the rest line by line.
+    var src = String(text || '').replace(/\n\s*\n(?=\s*\|)/g, '\n');
+    var lines = esc(src).split('\n'), html = '', list = 0, tbl = null;
+    function flushTable() {
+      if (!tbl) return;
+      var rows = tbl.filter(function (r) { return !/^\s*\|?\s*:?-{2,}/.test(r); }).map(function (r) { return r.replace(/^\s*\|/, '').replace(/\|\s*$/, '').split('|').map(function (c) { return c.trim(); }); });
+      if (rows.length) html += '<table class="md-t"><thead><tr>' + rows[0].map(function (c) { return '<th>' + inline(c) + '</th>'; }).join('') + '</tr></thead><tbody>' + rows.slice(1).map(function (r) { return '<tr>' + r.map(function (c) { return '<td>' + inline(c) + '</td>'; }).join('') + '</tr>'; }).join('') + '</tbody></table>';
+      tbl = null;
+    }
     function inline(t) { return t.replace(/\*\*([^*]+)\*\*/g, '<b>$1</b>').replace(/(^|[\s(])\*([^*\s][^*]*)\*(?=[\s.,;:!?)]|$)/g, '$1<i>$2</i>').replace(/`([^`]+)`/g, '<code>$1</code>'); }
     lines.forEach(function (l) {
+      if (/^\s*\|.*\|\s*$/.test(l)) { while (list > 0) { html += '</ul>'; list--; } (tbl = tbl || []).push(l); return; }
+      flushTable();
       var m = /^(\s*)[-*] (.*)$/.exec(l), lvl = m ? (m[1].length >= 2 ? 2 : 1) : 0;
       while (list > lvl) { html += '</ul>'; list--; }
       while (list < lvl) { html += '<ul>'; list++; }
       if (m) html += '<li>' + inline(m[2]) + '</li>';
       else if (l.trim()) html += '<p>' + inline(l) + '</p>';
     });
+    flushTable();
     while (list-- > 0) html += '</ul>';
     return html;
   }

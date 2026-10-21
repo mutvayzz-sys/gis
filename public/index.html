@@ -1146,10 +1146,10 @@ var Engine = (function () {
 /* Builds the output workbook with ExcelJS. The uploaded sheet is copied with its own formatting,
    then corrected (actual) and simulated versions get formulas, highlights and notes. */
 var Book = (function (E) {
-  var T = { style: 'thin', color: { argb: 'FF000000' } }, M = { style: 'medium', color: { argb: 'FF000000' } };
+  var T = { style: 'thin', color: { argb: 'FF000000' } }, M = { style: 'medium', color: { argb: 'FF000000' } }, G = { style: 'thin', color: { argb: 'FFBFBFBF' } }, N = { style: 'medium', color: { argb: 'FF1F3864' } };
   var C = { yel: 'FFFFFF00', cream: 'FFFEF2CB', pale: 'FFFEFFB3', blue: 'FFDFE3FF', ink: 'FF0000B8', orange: 'FFFCE4D6', green: 'FF548235', red: 'FFC00000', grey: 'FF808080', white: 'FFFFFFFF', head: 'FF1F3864', chg: 'FFC6EFCE', chgInk: 'FF006100', chgBar: 'FF63BE7B' };
   function fill(a) { return { type: 'pattern', pattern: 'solid', fgColor: { argb: a } }; }
-  function font(o) { o = o || {}; var f = { name: 'Calibri', size: o.size || 10, bold: !!o.bold, italic: !!o.italic }; if (o.color) f.color = { argb: o.color }; return f; }
+  function font(o) { o = o || {}; var f = { name: 'Calibri', size: o.size || 11, bold: !!o.bold, italic: !!o.italic }; if (o.color) f.color = { argb: o.color }; return f; }
   var L = E.colLetter;
   var NAMES = {
     orig: 'Original (as received)', actual: 'Actual results (corrected)', comp: 'Comparison', counts: 'Judgement counts',
@@ -1268,10 +1268,12 @@ var Book = (function (E) {
       function styleHelper(x, isT) { x.font = font({ bold: isT, color: 'FF595959' }); x.fill = fill('FFF7F7F7'); x.alignment = { horizontal: 'center', vertical: 'middle' }; x.border = { top: T, bottom: T, left: T, right: T }; }
       // A simulated change: bright green, bold, and the cell itself shows the actual value it replaces.
       function markChanged(x, kind, was, col) {
-        x.fill = fill(C.chg); x.font = font({ bold: true, color: C.chgInk });
+        var f0 = x.font || {}; x.fill = fill(C.chg); x.font = { name: f0.name || 'Calibri', size: f0.size || 11, bold: true, color: { argb: C.chgInk } };
+        x.alignment = Object.assign({}, x.alignment || {}, { wrapText: false, shrinkToFit: false });
         var w = kind === 'p' ? (was == null ? '' : (Math.round(was * 1000) / 10).toFixed(1) + '%') : String(was == null ? '' : (typeof was === 'number' ? E.fmt(was) : was)).replace(/"/g, '');
         x.numFmt = kind === 'p' ? '0.0%" (was ' + w + ')"' : kind === 'j' ? 'General;General;General;@" (was ' + w + ')"' : '0" (was ' + w + ')"';
-        var need = kind === 'j' ? 24 : 16;
+        var shown = kind === 'p' ? 6 + w.length + 7 : kind === 'j' ? String(x.value && x.value.result != null ? x.value.result : '').length + w.length + 7 : 4 + w.length + 7;
+        var need = Math.ceil(shown * ((f0.size || 11) / 11) * 1.12) + 2;
         if (col && (ws.getColumn(col).width || 9) < need) ws.getColumn(col).width = need;
       }
       // grade rows
@@ -1399,12 +1401,12 @@ var Book = (function (E) {
     var c0 = minC === Infinity ? 1 : minC, r = last + 3, NC = 11;
     var heads = [multi ? 'Subject' : 'Table', 'Grade', 'What changed', 'Actual (students)', 'Simulated (students)', 'Change (students)', 'Actual %', 'Simulated %', 'Change (% points)', 'Judgement: actual', 'Judgement: simulated'];
     // The list uses the visible columns from the table's first column on (folded working columns are skipped).
-    var COLS = [], W = [14, 17, 25, 11, 11, 11, 10, 10, 11, 14, 16];
+    var COLS = [], W = [17, 20, 30, 12, 12, 12, 11, 11, 12, 16, 18];
     for (var cc0 = c0; COLS.length < NC; cc0++) if (!ws.getColumn(cc0).hidden) COLS.push(cc0);
     COLS.forEach(function (cn, k) { var col = ws.getColumn(cn); if ((col.width || 9) < W[k]) col.width = W[k]; });
     function CL(k) { return L(COLS[k]); }
     function mergeRow(rr, a, z) { try { ws.mergeCells(rr, COLS[a], rr, COLS[z]); } catch (e) { } }
-    function put(rr, cc, v, f) { var x = ws.getCell(rr, COLS[cc]); x.value = v; x.style = {}; x.border = { top: T, bottom: T, left: T, right: T }; x.alignment = { vertical: 'middle', horizontal: cc < 3 ? 'left' : 'center', wrapText: true }; x.font = font({}); if (f) x.numFmt = f; return x; }
+    function put(rr, cc, v, f) { var x = ws.getCell(rr, COLS[cc]); x.value = v; x.style = {}; x.border = { top: G, bottom: G, left: G, right: G }; x.alignment = { vertical: 'middle', horizontal: cc < 3 ? 'left' : 'center', wrapText: true, indent: cc < 3 ? 1 : 0 }; x.font = font({}); if (f) x.numFmt = f; ws.getRow(rr).height = Math.max(ws.getRow(rr).height || 0, 20); return x; }
     mergeRow(r, 0, NC - 1);
     var t = ws.getCell(r, c0); t.value = 'WHAT THE SIMULATION CHANGES: OPTION ' + letter + ' (SIMULATED, NOT ACTUAL RESULTS)'; t.font = font({ bold: true, size: 12, color: C.white }); t.fill = fill(C.red); t.alignment = { vertical: 'middle', horizontal: 'left', indent: 1 }; ws.getRow(r).height = 22;
     r++;
@@ -1445,7 +1447,7 @@ var Book = (function (E) {
     mergeRow(r, 0, 2);
     if (lastChange >= first) { var tt = put(r, 5, { formula: 'SUM(' + CL(5) + first + ':' + CL(5) + lastChange + ')', result: o.cells.reduce(function (a, x) { return a + x.dG + x.dH; }, 0) }, '+0;-0;0'); tt.font = font({ bold: true, color: C.chgInk, size: 12 }); }
     var jc = put(r, 10, o.changed.length + ' judgements'); jc.font = font({ bold: true });
-    for (var q3 = 0; q3 < NC; q3++) ws.getCell(r, COLS[q3]).border = { top: M, bottom: M, left: T, right: T };
+    for (var q3 = 0; q3 < NC; q3++) ws.getCell(r, COLS[q3]).border = { top: N, bottom: N, left: G, right: G };
     // ExcelJS writes cell comments after the data bars, an order Excel rejects (it then drops the sheet).
     // Simulated cells already show "(was …)", so the comments are left out of simulated sheets.
     ws.eachRow({ includeEmpty: true }, function (row) { row.eachCell({ includeEmpty: true }, function (cell) {
@@ -1459,33 +1461,42 @@ var Book = (function (E) {
   /* ---------- plain formatted tables ---------- */
   function table(ws, r0, c0, headers, rows, o) {
     o = o || {};
+    // One house style for every table the workbook adds: navy headings, white rows, light grid lines.
+    // Callers still say which cells are simulated (blue) or highlighted; those map to the same colours as the simulated sheets.
+    function headFill(f) { return f === C.blue ? C.red : C.head; }
+    function bodyFill(f) { return f === C.blue ? C.chg : (f === C.pale ? 'FFF2F2F2' : (f === C.cream || f === C.yel || !f ? C.white : f)); }
+    function ink(c) { return c === C.ink ? C.chgInk : c; }
     headers.forEach(function (h, i) {
-      var x = ws.getCell(r0, c0 + i); x.value = h; x.font = font({ bold: true }); x.fill = fill((o.headFills && o.headFills[i]) || C.yel);
+      var x = ws.getCell(r0, c0 + i); x.value = h; x.font = font({ bold: true, color: C.white }); x.fill = fill(headFill(o.headFills && o.headFills[i]));
       x.alignment = { horizontal: 'center', vertical: 'middle', wrapText: true };
-      x.border = { top: M, bottom: M, left: i === 0 ? M : T, right: i === headers.length - 1 ? M : T };
+      x.border = { top: G, bottom: N, left: G, right: G };
     });
     ws.getRow(r0).height = o.headHeight || 32;
+    var widths = o.widths ? o.widths.slice() : headers.map(function (h, i) {
+      var m = Math.max.apply(null, String(h).split(/\s+/).map(function (w) { return w.length; }).concat([Math.min(String(h).length, 14)]));
+      rows.forEach(function (row) { var v = row[i]; if (v == null) return; var t = typeof v === 'number' ? 8 : String(v).length; m = Math.max(m, Math.min(t, 48)); });
+      return Math.max(10, m + 3);
+    });
     rows.forEach(function (row, j) {
-      var r = r0 + 1 + j, last = j === rows.length - 1, lines = 1;
+      var r = r0 + 1 + j, last = j === rows.length - 1;
       row.forEach(function (v, i) {
         var x = ws.getCell(r, c0 + i); x.value = v;
-        var f = o.fills ? (typeof o.fills === 'function' ? o.fills(i, j, row) : o.fills[i]) : C.cream; x.fill = fill(f || C.cream);
-        x.font = font({ bold: o.bold && o.bold(i, j, row), color: o.colors && o.colors(i, j, row) });
-        x.alignment = { horizontal: o.left && o.left[i] ? 'left' : 'center', vertical: 'middle', wrapText: true };
-        x.border = { top: T, bottom: last ? M : T, left: i === 0 ? M : T, right: i === row.length - 1 ? M : T };
+        var f = o.fills ? (typeof o.fills === 'function' ? o.fills(i, j, row) : o.fills[i]) : C.cream; x.fill = fill(bodyFill(f));
+        x.font = font({ bold: o.bold && o.bold(i, j, row), color: ink(o.colors && o.colors(i, j, row)) });
+        x.alignment = { horizontal: o.left && o.left[i] ? 'left' : 'center', vertical: 'middle', wrapText: true, indent: o.left && o.left[i] ? 1 : 0 };
+        x.border = { top: G, bottom: last ? N : G, left: G, right: G };
         if (o.fmt && o.fmt[i]) x.numFmt = o.fmt[i];
-        if (typeof v === 'string' && o.widths) lines = Math.max(lines, Math.ceil(v.length * 1.1 / (o.widths[i] || 10)));
       });
-      if (o.widths) ws.getRow(r).height = Math.max(16, 13.5 * lines + 3);
+      ws.getRow(r).height = 20;
     });
-    if (o.widths) o.widths.forEach(function (w, i) { ws.getColumn(c0 + i).width = w; });
+    widths.forEach(function (w, i) { var col = ws.getColumn(c0 + i); if (o.widths || (col.width || 9) < w) col.width = w; });
     return r0 + rows.length;
   }
   function titled(wb, name, title, sub, tab) {
     var ws = wb.addWorksheet(name, { properties: { tabColor: { argb: tab } } }); setup(ws);
     ws.getColumn(1).width = 3;
-    ws.getCell('B2').value = title; ws.getCell('B2').font = font({ size: 14, bold: true });
-    if (sub) { ws.getCell('B3').value = sub; ws.getCell('B3').font = font({ italic: true, color: 'FF595959' }); }
+    ws.getCell('B2').value = title; ws.getCell('B2').font = font({ size: 18, bold: true, color: C.head }); ws.getRow(2).height = 30;
+    if (sub) { ws.getCell('B3').value = sub; ws.getCell('B3').font = font({ italic: true, color: 'FF595959' }); ws.getRow(3).height = 18; }
     return ws;
   }
 
@@ -1528,8 +1539,43 @@ var Book = (function (E) {
     // order
     var order = (ctx.summary ? [NAMES.summary] : []).concat([NAMES.orig, NAMES.criteria, NAMES.actual, NAMES.log, NAMES.counts]).concat(s ? [simName] : []).concat(optNames).concat([NAMES.comp, NAMES.totals, NAMES.plan]).concat(opt ? [NAMES.changes] : []).concat(ctx.notes && wb.getWorksheet(NAMES.notes) ? [NAMES.notes] : []).concat([NAMES.settings]);
     order.forEach(function (n, i) { var w = wb.getWorksheet(n); if (w) w.orderNo = i; });
-    wb.eachSheet(function (w) { setup(w); });
+    wb.eachSheet(function (w) {
+      setup(w);
+      if (w.name === NAMES.orig) return;
+      var school = w.name === NAMES.actual || w.name === simName || optNames.indexOf(w.name) >= 0;
+      // Sheets the workbook makes read as pages: no grid lines. The school's own table keeps its look.
+      if (!school) { var v = (w.views && w.views[0]) || {}; w.views = [Object.assign({}, v, { showGridLines: false, zoomScale: 100 })]; }
+      fitRows(w, school ? lastTableRow(ctx) + 1 : 1);
+    });
     return wb;
+  }
+  function lastTableRow(ctx) { var m = 0; ctx.parsed.blocks.forEach(function (b) { m = Math.max(m, b.endRow); }); return m; }
+  // Excel does not resize rows to fit wrapped text when it opens a file, so every row with wrapped text gets a height that fits it.
+  function fitRows(ws, fromRow) {
+    var merged = {};
+    Object.keys(ws._merges || {}).forEach(function (k) {
+      var m = ws._merges[k].model || ws._merges[k], w = 0;
+      for (var c = m.left; c <= m.right; c++) if (!ws.getColumn(c).hidden) w += ws.getColumn(c).width || 9;
+      merged[m.top + ',' + m.left] = { w: w, tall: m.bottom > m.top };
+    });
+    ws.eachRow({ includeEmpty: false }, function (row, r) {
+      if (r < fromRow) return;
+      var need = 0;
+      row.eachCell({ includeEmpty: false }, function (cell, c) {
+        if (cell.isMerged && cell.master && cell.master.address !== cell.address) return;
+        var al = cell.alignment || {}; if (!al.wrapText || al.textRotation) return;
+        // Only text wraps; numbers never do (Excel shows ### instead), so they never set the height.
+        var v = cell.value, rv = v && typeof v === 'object' && !v.richText ? v.result : v;
+        var txt = v && v.richText ? v.richText.map(function (t) { return t.text; }).join('') : (typeof rv === 'string' ? rv : '');
+        if (!txt) return;
+        var mg = merged[r + ',' + c]; if (mg && mg.tall) return;
+        var w = mg ? mg.w : (ws.getColumn(c).width || 9), f = cell.font || {}, sz = f.size || 11;
+        var per = (sz / 11) * (f.bold ? 1.06 : 1) * 0.9, cap = Math.max(1, (w - 1.2 - (al.indent || 0)) / per);
+        var lines = txt.split('\n').reduce(function (n, l) { return n + Math.max(1, Math.ceil(l.length / cap)); }, 0);
+        need = Math.max(need, lines * sz * 1.34 + 6);
+      });
+      if (need && need > (row.height || 15)) row.height = Math.min(409, Math.ceil(need));
+    });
   }
 
   function comparison(wb, ctx, opt, simName, help) {
@@ -1744,15 +1790,17 @@ var Book = (function (E) {
   // summary: {title, subtitle, sections: [{heading, text?, bullets?, table?: {head, rows}, tone?}]}
   function summarySheet(wb, sm) {
     var ws = wb.addWorksheet(NAMES.summary, { properties: { tabColor: { argb: 'FF262626' } } }); setup(ws);
-    ws.getColumn(1).width = 3; [26, 16, 16, 16, 16, 16, 16].forEach(function (w, i) { ws.getColumn(2 + i).width = w; });
+    ws.getColumn(1).width = 3; [30, 16, 16, 16, 16, 18, 18].forEach(function (w, i) { ws.getColumn(2 + i).width = w; });
     var r = 2;
-    var t = ws.getCell(r, 2); t.value = sm.title; t.font = font({ size: 16, bold: true }); r++;
+    var t = ws.getCell(r, 2); t.value = sm.title; t.font = font({ size: 20, bold: true, color: C.head }); ws.getRow(r).height = 32; r++;
     if (sm.subtitle) { var st0 = ws.getCell(r, 2); st0.value = sm.subtitle; st0.font = font({ italic: true, color: 'FF595959' }); r++; }
     r++;
     sm.sections.forEach(function (sec) {
-      var h = ws.getCell(r, 2); h.value = sec.heading; h.font = font({ size: 12, bold: true, color: sec.tone === 'sim' ? 'FFC00000' : 'FF262626' }); r++;
-      if (sec.text) { ws.mergeCells(r, 2, r, 8); var x = ws.getCell(r, 2); x.value = sec.text; x.alignment = { wrapText: true, vertical: 'top' }; x.font = font(); ws.getRow(r).height = Math.max(16, 15 * Math.ceil(sec.text.length / 110)); r++; }
-      (sec.bullets || []).forEach(function (b) { ws.mergeCells(r, 2, r, 8); var x = ws.getCell(r, 2); x.value = '\u2022 ' + b; x.alignment = { wrapText: true, vertical: 'top' }; x.font = font(); ws.getRow(r).height = Math.max(16, 15 * Math.ceil(b.length / 110)); r++; });
+      var h = ws.getCell(r, 2); h.value = sec.heading; h.font = font({ size: 14, bold: true, color: sec.tone === 'sim' ? 'FFC00000' : C.head }); ws.getRow(r).height = 24; h.alignment = { vertical: 'bottom' };
+      for (var hc = 2; hc <= 8; hc++) ws.getCell(r, hc).border = { bottom: { style: 'thin', color: { argb: sec.tone === 'sim' ? 'FFC00000' : C.head } } };
+      r++;
+      if (sec.text) { ws.mergeCells(r, 2, r, 8); var x = ws.getCell(r, 2); x.value = sec.text; x.alignment = { wrapText: true, vertical: 'top' }; x.font = font(); r++; }
+      (sec.bullets || []).forEach(function (b) { ws.mergeCells(r, 2, r, 8); var x = ws.getCell(r, 2); x.value = '\u2022 ' + b; x.alignment = { wrapText: true, vertical: 'top' }; x.font = font(); r++; });
       if (sec.table) { r = table(ws, r, 2, sec.table.head, sec.table.rows, { fills: function () { return sec.tone === 'sim' ? C.blue : C.cream; }, headFills: sec.table.head.map(function () { return sec.tone === 'sim' ? C.blue : C.yel; }), left: { 0: true }, headHeight: 30 }) + 1; }
       r++;
     });

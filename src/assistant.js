@@ -6,6 +6,17 @@
   function restore(s) { st.cfg = s.cfg; st.edits = s.edits; st.headerRow = s.headerRow; st.sel = s.sel; if (s.sheetName !== st.sheetName && st.src.getWorksheet(s.sheetName)) { st.sheetName = s.sheetName; } st.grid = gridFromWs(st.src.getWorksheet(st.sheetName)); recompute(); }
   function record(label, before, extra) { AS.log.unshift({ id: Date.now() + Math.random(), label: label, before: before, extra: extra || null, when: new Date() }); renderLog(); }
   function letterToCol(s) { s = String(s || '').trim().toUpperCase(); if (!/^[A-Z]{1,3}$/.test(s)) return null; var n = 0; for (var i = 0; i < s.length; i++) n = n * 26 + (s.charCodeAt(i) - 64); return n; }
+  function r1(v) { return v == null ? null : Math.round(v * 1000) / 10; }
+  // Ready-made "how far from the next level" figures, so answers do not rely on mental arithmetic.
+  function gaps(g) {
+    var c = st.cfg, o = {}; if (!g.A) return o;
+    var needAcc = E.needAt(g.A, c.acc);
+    if (g.G < needAcc) { o.studentsShortOfAcceptable = needAcc - g.G; return o; }
+    var steps = [['Good', c.good], ['Very Good', c.vg], ['Outstanding', c.out]];
+    for (var i = 0; i < steps.length; i++) { var need = E.needAt(g.A, steps[i][1]); if (g.H < need) { o.nextLevel = steps[i][0]; o.moreBetterThanExpectedNeededForNext = need - g.H; break; } }
+    o.marginAboveAcceptable = g.G - needAcc;
+    return o;
+  }
   function overview() {
     var o = { loaded: !!st.grid, file: st.srcName || null, step: st.step };
     if (!st.src) { o.hint = 'Nothing is loaded yet. The person can choose a file or enter rows. If they give you numbers, type them in with enter_rows.'; return o; }
@@ -22,7 +33,7 @@
     o.simulationLimits = { maxStudentsPerGrade: c.simMaxStudents, maxPointsPerGrade: c.simMaxPts, gradesLeftAlone: [], ownChanges: [] };
     if (st.base) {
       var gById = {};
-      o.units = st.base.units.map(function (u) { return { table: u.block, group: u.group, phase: u.phase, grades: u.grades.map(function (g) { gById[g.id] = g; return { grade: g.grade, row: g.r, students: g.E, assessed: g.A, expectedOrBetter: g.G, betterThanExpected: g.H, workedOutFromPercentages: !!g.derived || undefined, judgement: g.judg }; }), total: u.total ? { judgement: u.total.judg, average: u.total.avg, roundingToConfirm: u.total.roundingFlag } : null }; });
+      o.units = st.base.units.map(function (u) { return { table: u.block, group: u.group, phase: u.phase, grades: u.grades.map(function (g) { gById[g.id] = g; return Object.assign({ grade: g.grade, row: g.r, students: g.E, assessed: g.A, expectedOrBetter: g.G, betterThanExpected: g.H, pctExpectedOrBetter: r1(g.I), pctBetterThanExpected: r1(g.J), workedOutFromPercentages: !!g.derived || undefined, judgement: g.judg }, gaps(g)); }), total: u.total ? { students: u.total.E, assessed: u.total.A, expectedOrBetter: u.total.G, betterThanExpected: u.total.H, pctExpectedOrBetter: r1(u.total.I), pctBetterThanExpected: r1(u.total.J), averagePoints: u.total.avg == null ? null : Math.round(u.total.avg * 100) / 100, roundedPoints: u.total.rounded, judgedBy: c.totalMethod === 'points' ? 'average of grade points' : 'summed counts', judgement: u.total.judg, roundingToConfirm: u.total.roundingFlag || undefined } : null }; });
       (c.simLocked || []).forEach(function (id) { if (gById[id]) o.simulationLimits.gradesLeftAlone.push({ grade: gById[id].grade, row: gById[id].r }); });
       Object.keys(c.simPinned || {}).forEach(function (id) { var g = gById[id]; if (g) o.simulationLimits.ownChanges.push({ grade: g.grade, row: g.r, expectedOrBetter: c.simPinned[id].G, betterThanExpected: c.simPinned[id].H }); });
       var k = E.check(E.counted(st.base.items, c.basis), c);

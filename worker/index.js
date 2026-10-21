@@ -179,15 +179,20 @@ export default {
         headers: apiHeaders(env, { 'content-type': 'application/json' }),
         body: JSON.stringify({ model: env.MODEL || 'claude-haiku-5-5', max_tokens: 32000, output_config: { effort: env.EFFORT || 'max' }, system: PROMPT + SANDBOX_NOTE, messages, tools: tools.concat([CODE_TOOL]), container: cid ? { id: cid, skills: SKILLS } : { skills: SKILLS } })
       });
-      let res, data = {};
+      let res, data = {}, raw = '', failed = '';
+      const t0 = Date.now();
       try {
         res = await call(containerId);
-        try { data = await res.json(); } catch { /* fall through */ }
+        raw = await res.text();
+        try { data = JSON.parse(raw); } catch { /* not JSON */ }
+      } catch (e) {
+        failed = String((e && e.message) || e).slice(0, 200);
       } finally {
         if (fileId) ctx.waitUntil(fetch(base(env) + '/files/' + fileId, { method: 'DELETE', headers: apiHeaders(env) }).catch(() => {}));
       }
+      if (failed) return json({ error: 'Claude could not be reached (' + failed + ', after ' + Math.round((Date.now() - t0) / 1000) + 's). Try again.' }, 502);
       if (!res.ok) {
-        const m = (data.error && data.error.message) || '';
+        const m = (data.error && data.error.message) || ('HTTP ' + res.status + ' after ' + Math.round((Date.now() - t0) / 1000) + 's: ' + clean(raw, 200));
         // A sandbox that expired (they last 30 days) or was lost: the page starts a new one and sends the file again.
         if (containerId && /container/i.test(m)) return json({ error: 'container_expired' }, 409);
         return json({ error: m || 'Claude could not answer right now. Try again.' }, 502);

@@ -1,12 +1,56 @@
 // Serves the page and relays the assistant's requests to Claude.
 // Secrets live only in Cloudflare: ANTHROPIC_API_KEY, and GIS_GITHUB_TOKEN for reports.
-// Nothing about a sheet is stored. /api/report opens a GitHub issue when the assistant
-// hits something it cannot do; it carries a short summary only, never sheet data.
+// Nothing about a sheet is stored here. For the assistant, the spreadsheet is put in Claude's
+// Python sandbox (Anthropic keeps sandboxes up to 30 days); the uploaded copy is deleted at once.
+// /api/report opens a GitHub issue when the assistant hits something it cannot do; it carries a
+// short summary only, never sheet data.
 import PROMPT from '../src/prompt.txt';
 import puppeteer from '@cloudflare/puppeteer';
 
 const TOOLS = new Set(['get_overview', 'read_cells', 'choose_sheet', 'set_header_row', 'set_column', 'set_rules', 'edit_number', 'set_cell', 'choose_option', 'go_to_step', 'set_cells', 'enter_rows', 'set_phase', 'add_rule', 'remove_rule', 'set_simulation_limits', 'set_simulated_numbers', 'report_gap', 'undo_last_change', 'offer_downloads', 'use_all_sheets', 'scan_sheet']);
-const MAX_BODY = 4 * 1024 * 1024; // room for a few attached pictures
+const MAX_BODY = 14 * 1024 * 1024; // room for a few attached pictures and the spreadsheet itself
+const API = 'https://api.anthropic.com/v1';
+const SHEET_TYPES = /\.(xlsx|xlsm|xls|csv)$/i;
+// Claude's Python sandbox (code execution) with Anthropic's ready-made Excel skill. It has no internet.
+const CODE_TOOL = { type: 'code_execution_20250825', name: 'code_execution' };
+const SKILLS = [{ type: 'anthropic', skill_id: 'xlsx', version: 'latest' }];
+const SANDBOX_NOTE = `
+
+PYTHON SANDBOX
+You also have code_execution: a Python sandbox (pandas, openpyxl) with Anthropic's Excel skill. When a spreadsheet is loaded, a copy of the file exactly as uploaded is put in the sandbox (find it with: find / -maxdepth 4 -type f \\( -iname '*.xlsx' -o -iname '*.xlsm' -o -iname '*.xls' -o -iname '*.csv' \\) -mmin -600 2>/dev/null | grep -v -e /usr -e /opt -e /skills). It stays there for the rest of the conversation, with anything you save next to it.
+Use it to understand the file properly: every tab, merged cells, formulas (openpyxl data_only=False) and their saved values (data_only=True), tables side by side or stacked, headings over two rows, totals typed in, numbers typed as text. Sheets are typed by hand and every school's is different, so look before you assume.
+The sandbox cannot see or change the page, and the page cannot see the sandbox. To make the page use what you found, call the page tools (set_header_row, set_column, set_cells, enter_rows, use_all_sheets, choose_sheet). Edits made on the page are not in the sandbox copy.
+The page's engine is the source of truth for judgements, phase totals, limits and simulations. Use Python to read and to check; if your figures disagree with the page, find out why and fix how the page reads the sheet. Never report your own Python judgements instead of the page's.
+Print compact results only (no whole sheets). Do not mention Python, code or the sandbox to the person unless they ask; say you checked the file.`;
+
+// Container ids are signed so a visitor can only continue a sandbox this site gave them.
+async function sign(env, id) {
+  const key = await crypto.subtle.importKey('raw', new TextEncoder().encode('gis-container:' + env.ANTHROPIC_API_KEY), { name: 'HMAC', hash: 'SHA-256' }, false, ['sign']);
+  const mac = new Uint8Array(await crypto.subtle.sign('HMAC', key, new TextEncoder().encode(id)));
+  return btoa(String.fromCharCode(...mac.slice(0, 18))).replace(/\+/g, '-').replace(/\//g, '_');
+}
+async function openContainer(env, token) {
+  if (typeof token !== 'string' || token.length > 200) return null;
+  const i = token.lastIndexOf('.'); if (i < 1) return null;
+  const id = token.slice(0, i);
+  return /^[A-Za-z0-9_-]{4,150}$/.test(id) && (await sign(env, id)) === token.slice(i + 1) ? id : null;
+}
+function apiHeaders(env, extra) { return Object.assign({ 'x-api-key': env.ANTHROPIC_API_KEY, 'anthropic-version': '2023-06-01' }, extra || {}); }
+function base(env) { return env.ANTHROPIC_BASE || API; } // ANTHROPIC_BASE is only for local tests
+async function uploadSheet(env, up) {
+  const name = clean(up && up.name, 120).replace(/[<>:"|?*\\/]/g, '_');
+  if (!SHEET_TYPES.test(name) || typeof up.data !== 'string') return null;
+  let bytes;
+  try { bytes = Uint8Array.from(atob(up.data), (c) => c.charCodeAt(0)); } catch { return null; }
+  if (!bytes.length || bytes.length > 9 * 1024 * 1024) return null;
+  const form = new FormData();
+  form.append('file', new Blob([bytes]), name);
+  form.append('expires_in_seconds', '3600'); // deleted straight after use; this is the safety net
+  const res = await fetch(base(env) + '/files', { method: 'POST', headers: apiHeaders(env), body: form });
+  if (!res.ok) return null;
+  const f = await res.json().catch(() => ({}));
+  return f.id || null;
+}
 const REPORT_REPO = 'mutvayzz-sys/gis';
 
 async function allowed(limiter, key) {
@@ -27,7 +71,7 @@ function json(data, status = 200) {
 }
 
 export default {
-  async fetch(request, env) {
+  async fetch(request, env, ctx) {
     const url = new URL(request.url);
 
     if (url.pathname === '/api/health') return json({ ok: Boolean(env.ANTHROPIC_API_KEY), reports: Boolean(env.GIS_GITHUB_TOKEN), pdf: Boolean(env.BROWSER) });
@@ -118,15 +162,38 @@ export default {
         .filter((t) => t && TOOLS.has(t.name))
         .map((t) => ({ name: t.name, description: String(t.description || '').slice(0, 1024), input_schema: t.input_schema || { type: 'object', properties: {} } }));
 
-      const res = await fetch(env.ANTHROPIC_URL || 'https://api.anthropic.com/v1/messages', {
+      // The spreadsheet goes into Claude's sandbox for this request only; the uploaded copy is deleted right after.
+      let fileId = null;
+      if (body.upload) {
+        fileId = await uploadSheet(env, body.upload);
+        const last = messages[messages.length - 1];
+        if (fileId && last && last.role === 'user') {
+          const parts = typeof last.content === 'string' ? [{ type: 'text', text: last.content }] : Array.isArray(last.content) ? last.content.slice() : [];
+          parts.push({ type: 'container_upload', file_id: fileId });
+          messages[messages.length - 1] = { role: 'user', content: parts };
+        }
+      }
+      const containerId = await openContainer(env, body.container);
+      const call = (cid) => fetch(base(env) + '/messages', {
         method: 'POST',
-        headers: { 'x-api-key': env.ANTHROPIC_API_KEY, 'anthropic-version': '2023-06-01', 'content-type': 'application/json' },
-        body: JSON.stringify({ model: env.MODEL || 'claude-sonnet-5-5', max_tokens: 16000, output_config: { effort: env.EFFORT || 'medium' }, system: PROMPT, messages, tools })
+        headers: apiHeaders(env, { 'content-type': 'application/json' }),
+        body: JSON.stringify({ model: env.MODEL || 'claude-haiku-5-5', max_tokens: 32000, output_config: { effort: env.EFFORT || 'max' }, system: PROMPT + SANDBOX_NOTE, messages, tools: tools.concat([CODE_TOOL]), container: cid ? { id: cid, skills: SKILLS } : { skills: SKILLS } })
       });
-      let data = {};
-      try { data = await res.json(); } catch { /* fall through */ }
-      if (!res.ok) return json({ error: (data.error && data.error.message) || 'Claude could not answer right now. Try again.' }, 502);
-      return json({ content: data.content || [], stop_reason: data.stop_reason });
+      let res, data = {};
+      try {
+        res = await call(containerId);
+        try { data = await res.json(); } catch { /* fall through */ }
+      } finally {
+        if (fileId) ctx.waitUntil(fetch(base(env) + '/files/' + fileId, { method: 'DELETE', headers: apiHeaders(env) }).catch(() => {}));
+      }
+      if (!res.ok) {
+        const m = (data.error && data.error.message) || '';
+        // A sandbox that expired (they last 30 days) or was lost: the page starts a new one and sends the file again.
+        if (containerId && /container/i.test(m)) return json({ error: 'container_expired' }, 409);
+        return json({ error: m || 'Claude could not answer right now. Try again.' }, 502);
+      }
+      const cid = data.container && data.container.id;
+      return json({ content: data.content || [], stop_reason: data.stop_reason, container: cid ? cid + '.' + (await sign(env, cid)) : null, uploaded: !!fileId });
     }
 
     return env.ASSETS.fetch(request);

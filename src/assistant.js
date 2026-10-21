@@ -48,9 +48,57 @@
   }
   function gradeAt(row) { var it = st.base && st.base.items.filter(function (x) { return x.kind === 'grade' && x.r === +row; })[0]; if (!it) throw new Error('No grade on row ' + row + '. Use the row numbers from get_overview.'); return it; }
   var CAT_SETS = { 'Outstanding': ['Outstanding'], 'Very Good or better': ['Outstanding', 'Very Good'], 'Good or better': ['Outstanding', 'Very Good', 'Good'], 'Acceptable or better': ['Outstanding', 'Very Good', 'Good', 'Acceptable'], 'Very Good': ['Very Good'], 'Good': ['Good'], 'Acceptable': ['Acceptable'], 'Weak or worse': ['Weak', 'Very Weak'], 'Weak': ['Weak'], 'Very Weak': ['Very Weak'] };
+  function scanSheet(name) {
+    if (!st.src) return { loaded: false, hint: 'Nothing is loaded.' };
+    var ws = st.src.getWorksheet(name || st.sheetName); if (!ws) throw new Error('No sheet called ' + name);
+    var g = name && name !== st.sheetName ? gridFromWs(ws) : st.grid, out = { sheet: ws.name, otherSheets: st.src.worksheets.filter(function (w) { return w !== ws && gridFromWs(w).maxR > 0; }).map(function (w) { return w.name; }) };
+    out.size = { rows: g.maxR, lastColumn: E.colLetter(g.maxC) };
+    var rows = [], budget = 24000;
+    for (var r = 1; r <= g.maxR && budget > 0; r++) {
+      var parts = [];
+      for (var c = 1; c <= g.maxC; c++) { var v = g.cells[r + ',' + c]; if (v != null && v !== '') parts.push(E.colLetter(c) + '=' + (typeof v === 'string' ? JSON.stringify(v.length > 60 ? v.slice(0, 60) + '…' : v) : (typeof v === 'number' ? Math.round(v * 10000) / 10000 : String(v)))); }
+      if (parts.length) { var line = r + ': ' + parts.join(' | '); rows.push(line); budget -= line.length; }
+    }
+    out.rows = rows; if (budget <= 0) out.rowsCut = 'Only the first ' + rows.length + ' rows are shown; use read_cells for the rest.';
+    var usedRows = {}, problems = [];
+    var parsed = (!name || name === st.sheetName) ? st.parsed : E.parse(g, { sheetName: ws.name });
+    out.tables = (parsed ? parsed.blocks : []).map(function (b) {
+      usedRows[b.headerRow] = 1;
+      var cols = {}; Object.keys(b.col).forEach(function (k) { if (b.col[k] != null) cols[E.ROLE_LABEL[k]] = E.colLetter(b.col[k]); });
+      b.rows.forEach(function (x) { usedRows[x.r] = 1; }); b.totals.forEach(function (t) { usedRows[t.r] = 1; });
+      // Checks on each grade row
+      b.rows.forEach(function (x) {
+        var tag = (parsed.blocks.length > 1 ? b.title + ' ' : '') + x.grade + ' (row ' + x.r + ')';
+        ['E', 'G', 'H', 'I', 'J', 'F'].forEach(function (k) { var c = b.col[k]; if (c == null) return; var raw = g.cells[x.r + ',' + c]; if (typeof raw === 'string' && raw.trim() && !isNaN(parseFloat(raw.replace(/[%,\s]/g, '')))) problems.push(tag + ': ' + E.ROLE_LABEL[k] + ' in ' + E.colLetter(c) + ' is typed as text ("' + raw + '"); it was read as a number.'); });
+        if (x.G != null && x.E != null && x.G > x.E) problems.push(tag + ': more students made expected progress (' + x.G + ') than are in the group (' + x.E + ').');
+        if (x.H != null && x.G != null && x.H > x.G) problems.push(tag + ': better than expected (' + x.H + ') is more than expected or better (' + x.G + ').');
+        [['I', x.I], ['J', x.J]].forEach(function (q) { if (q[1] != null && (q[1] > 100 || q[1] < 0)) problems.push(tag + ': ' + E.ROLE_LABEL[q[0]] + ' is ' + q[1] + ', outside 0 to 100%.'); });
+        if (x.I != null && x.J != null) { var fi = x.I > 1 ? x.I / 100 : x.I, fj = x.J > 1 ? x.J / 100 : x.J; if (fj > fi + 1e-9) problems.push(tag + ': % better than expected is higher than % expected or better.'); }
+      });
+      var ip = b.rows.map(function (x) { return x.I; }).filter(function (v) { return v != null; });
+      if (ip.some(function (v) { return v > 1; }) && ip.some(function (v) { return v > 0 && v <= 1; })) problems.push((parsed.blocks.length > 1 ? b.title + ': ' : '') + 'percentages are mixed: some look like 0.73 and some like 73. Check they mean the same thing.');
+      return { title: b.title, headingRow: b.headerRow, lastRow: b.endRow, columns: cols, gradeRows: b.rows.map(function (x) { return x.r + ' ' + x.grade + (x.phase ? ' (' + E.phaseLabel(x.phase) + ')' : ''); }), totalRows: b.totals.map(function (t) { return t.r + ' ' + E.phaseLabel(t.phase) + ' total'; }), leftOutNoResults: b.skipped.length ? b.skipped : undefined };
+    });
+    // Rows with numbers that no table used, and "Total" rows that were not recognised
+    var unread = [];
+    for (var rr = 1; rr <= g.maxR; rr++) {
+      if (usedRows[rr]) continue;
+      var nums = 0, txt = '';
+      for (var cc = 1; cc <= g.maxC; cc++) { var vv = g.cells[rr + ',' + cc]; if (typeof vv === 'number') nums++; else if (vv != null && !txt) txt = String(vv); }
+      if (nums >= 2) unread.push('row ' + rr + (txt ? ' ("' + txt.slice(0, 40) + '")' : '') + ': ' + nums + ' numbers not used by any table');
+      if (/\btotal\b/i.test(txt) && nums) problems.push('Row ' + rr + ' looks like a total ("' + txt.slice(0, 40) + '") but was not matched to a table.');
+    }
+    out.rowsNotUsed = unread;
+    out.problems = problems.length ? problems : ['None found.'];
+    out.howToFix = 'Columns or heading row wrong: set_header_row / set_column. A label, heading or "Total" missing or a number typed oddly: set_cell or set_cells. Several sheets that belong together: use_all_sheets. Still unreadable: read the numbers here and enter_rows.';
+    return out;
+  }
   var TOOLS = [
     { name: 'get_overview', description: 'Returns the current state as JSON: file, sheets, detected tables and column mapping, rules, every grade row, results, corrections and simulation options. Call this first, and again after changes to check them.',
       inputSchema: { type: 'object', properties: {} }, execute: function () { return overview(); } },
+    { name: 'scan_sheet', description: 'Reads the whole loaded sheet and checks it against what the page understood. Returns every non-empty row (compact), the other sheets in the file, what each table used (heading row, columns, grade rows, total rows, rows left out), rows with numbers that no table used, and problems found (numbers typed as text, impossible values, unrecognised total rows, mixed percentage formats). Sheets are typed by hand and differ from school to school, so call this first whenever a sheet is loaded or a result looks odd.',
+      inputSchema: { type: 'object', properties: { sheet: { type: 'string' } } },
+      execute: function (i) { return scanSheet(i && i.sheet); } },
     { name: 'read_cells', description: 'Reads raw cell values from the loaded sheet (as uploaded, including any fixes made with set_cell). Use it to understand an unusual layout. Returns {cell: value} for non-empty cells. Range like "A1:L30", at most 600 cells.',
       inputSchema: { type: 'object', properties: { range: { type: 'string' }, sheet: { type: 'string' } }, required: ['range'] },
       execute: function (i) {
@@ -64,6 +112,9 @@
       } },
     { name: 'choose_sheet', description: 'Switches to another sheet (tab) of the uploaded workbook.', inputSchema: { type: 'object', properties: { name: { type: 'string' } }, required: ['name'] },
       execute: function (i) { var n = String(i.name); if (!st.src.getWorksheet(n)) throw new Error('No sheet called ' + n); var b = snapshot(); st.headerRow = null; pickSheet(n); record('Switched to the sheet “' + n + '”', b); return overview().tables || []; } },
+    { name: 'use_all_sheets', description: 'When the workbook has several sheets (tabs) with results, for example one per subject, stacks them into one review so the Weak and Outstanding limits apply across all of them. Use it when the brief is about overall judgements across subjects; say that you did.',
+      inputSchema: { type: 'object', properties: {} },
+      execute: function () { var b = snapshot(), prevName = st.sheetName; if (!useAllSheets()) throw new Error('This file does not have several sheets with results.'); record('Using all sheets together (was “' + prevName + '”)', b); return overview().tables || []; } },
     { name: 'set_header_row', description: 'Tells the page which row holds the column headings, when it was not found automatically. Pass row 0 to go back to automatic.', inputSchema: { type: 'object', properties: { row: { type: 'integer' } }, required: ['row'] },
       execute: function (i) { var b = snapshot(); st.headerRow = +i.row || null; st.cfg.columns = {}; st.edits = {}; recompute(); record(st.headerRow ? 'Headings read from row ' + st.headerRow : 'Headings found automatically', b); return overview().tables || []; } },
     { name: 'set_column', description: 'Sets which column holds a role. Roles: phase, group, grade, E (number of students), F (% assessed), G (made expected or better), H (made better than expected), I (% expected or better), J (% better than expected), K (judgement). Column is a letter like "D", or "" for not used.',
@@ -193,7 +244,7 @@
   ];
 
   /* ---------- transports ---------- */
-  var PRIORITY = ['get_overview', 'read_cells', 'set_column', 'set_header_row', 'set_cells', 'enter_rows', 'set_rules', 'add_rule', 'set_simulation_limits', 'set_simulated_numbers', 'choose_option', 'go_to_step', 'undo_last_change', 'offer_downloads', 'edit_number', 'set_phase', 'remove_rule', 'choose_sheet', 'set_cell'];
+  var PRIORITY = ['get_overview', 'scan_sheet', 'read_cells', 'set_column', 'set_header_row', 'set_cells', 'enter_rows', 'set_rules', 'add_rule', 'set_simulation_limits', 'set_simulated_numbers', 'choose_option', 'go_to_step', 'undo_last_change', 'offer_downloads', 'use_all_sheets', 'edit_number', 'set_phase', 'remove_rule', 'choose_sheet', 'set_cell'];
   function detect() {
     if (window.claude && typeof window.claude.use === 'function') {
       return window.claude.use('sample').then(function (s) {
@@ -219,9 +270,20 @@
     if (noTools) turns[0].content += '\n\nIN THIS VIEW YOU HAVE NO TOOLS: you can explain and advise, but you cannot change anything on the page. If they ask for a change, tell them exactly where on the page to make it (step and field).';
     var opts = noTools ? { cache: false, signal: AS.ctl.signal, onText: function (u) { onText(u.text); } } : { tools: pageTools(), cache: false, signal: AS.ctl.signal, onText: function (u) { onText(u.text); } };
     if (images && images.length && AS.imgMax) opts.images = images.slice(0, AS.imgMax);
-    opts.model = 'claude-sonnet-5-5'; opts.effort = 'medium'; opts.modelTier = 'default';
+    opts.model = 'claude-haiku-5-5'; opts.effort = 'high'; opts.modelTier = 'quick';
     return AS.sample(turns, opts)
       .then(function (r) { return r.text; });
+  }
+  // The spreadsheet as uploaded, for the assistant's Python sandbox (base64). Formats the sandbox cannot open are sent as .xlsx.
+  function sandboxCopy(raw) {
+    var ok = /^(xlsx|xlsm|xls|csv)$/.test(raw.ext);
+    var bufP = ok ? Promise.resolve(raw.buf) : (st.origWb ? st.origWb.xlsx.writeBuffer() : Promise.resolve(null));
+    return bufP.then(function (buf) {
+      if (!buf || buf.byteLength > 9 * 1024 * 1024) return null;
+      var u8 = new Uint8Array(buf), bin = '';
+      for (var i = 0; i < u8.length; i += 32768) bin += String.fromCharCode.apply(null, u8.subarray(i, i + 32768));
+      return { name: ok ? raw.name : raw.name.replace(/\.[^.]*$/, '') + '.xlsx', data: btoa(bin) };
+    }).catch(function () { return null; });
   }
   function runApi(userText, onText, images) {
     var msgs = AS.turns.slice(-12).map(function (t) { return { role: t.role, content: t.content }; });
@@ -229,15 +291,27 @@
     if (images && images.length) { msgs.push({ role: 'user', content: images.slice(0, IMG_MAX).map(function (d) { return { type: 'image', source: { type: 'base64', media_type: 'image/jpeg', data: d } }; }).concat([textPart]) }); }
     else msgs.push({ role: 'user', content: textPart.text });
     var tools = TOOLS.filter(function (t) { return t.name !== 'report_gap' || AS.canReport; }).map(function (t) { return { name: t.name, description: t.description, input_schema: t.inputSchema }; });
-    var said = '';
+    var said = '', retried = false;
     function round(n) {
-      if (n > 12) return Promise.resolve(said || 'I stopped after several steps. Check the changes listed below.');
-      return fetch('/api/chat', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ messages: msgs, tools: tools }), signal: AS.ctl.signal })
-        .then(function (r) { if (!r.ok) return r.json().catch(function () { return {}; }).then(function (j) { throw { code: 'api', message: j.error || ('The assistant is unavailable (' + r.status + ').') }; }); return r.json(); })
+      if (n > 16) return Promise.resolve(said || 'I stopped after several steps. Check the changes listed below.');
+      var raw = st.rawFile && !st.rawFile.sent && n === 1 ? st.rawFile : null;
+      return (raw ? sandboxCopy(raw) : Promise.resolve(null)).then(function (upload) {
+        return fetch('/api/chat', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ messages: msgs, tools: tools, container: AS.container || null, upload: upload }), signal: AS.ctl.signal });
+      })
+        .then(function (r) {
+          if (r.status === 409 && !retried) { retried = true; AS.container = null; if (st.rawFile) st.rawFile.sent = false; return { again: true }; }
+          if (!r.ok) return r.json().catch(function () { return {}; }).then(function (j) { throw { code: 'api', message: j.error || ('The assistant is unavailable (' + r.status + ').') }; }); return r.json();
+        })
         .then(function (res) {
+          if (res.again) return round(n);
+          if (res.container) AS.container = res.container;
+          if (res.uploaded && raw) raw.sent = true;
           var blocks = res.content || [], text = blocks.filter(function (b) { return b.type === 'text'; }).map(function (b) { return b.text; }).join('\n');
           if (text) { said += (said ? '\n\n' : '') + text; onText(said); }
           msgs.push({ role: 'assistant', content: blocks });
+          if (blocks.some(function (b) { return b.type === 'server_tool_use'; })) activity('code');
+          // A long sandbox run is paused by the API; sending the reply back lets it carry on.
+          if (res.stop_reason === 'pause_turn') return round(n + 1);
           var uses = blocks.filter(function (b) { return b.type === 'tool_use'; });
           if (res.stop_reason !== 'tool_use' || !uses.length) return said;
           return Promise.all(uses.map(function (u) {
@@ -294,7 +368,7 @@
     return html;
   }
   function bubble(role, text, cls) { var d = document.createElement('div'); d.className = 'bub ' + role + (cls ? ' ' + cls : ''); d.textContent = text; log.appendChild(d); $('asst-hello').hidden = true; var bd = $('asst-body'); bd.scrollTop = bd.scrollHeight; return d; }
-  var NICE = { get_overview: 'Looking at the page', read_cells: 'Reading cells', choose_sheet: 'Switching sheet', set_header_row: 'Setting the heading row', set_column: 'Matching a column', set_rules: 'Changing rules', edit_number: 'Correcting a number', set_cell: 'Fixing a cell', set_cells: 'Fixing cells', enter_rows: 'Typing the rows in', set_phase: 'Setting phases', add_rule: 'Adding a rule', remove_rule: 'Removing a rule', set_simulation_limits: 'Setting simulation limits', set_simulated_numbers: 'Changing the simulation', report_gap: 'Notifying the Gcaplabs team', undo_last_change: 'Undoing a change', offer_downloads: 'Getting the downloads ready', choose_option: 'Choosing an option', go_to_step: 'Opening a step' };
+  var NICE = { get_overview: 'Looking at the page', scan_sheet: 'Scanning the whole sheet', read_cells: 'Reading cells', choose_sheet: 'Switching sheet', set_header_row: 'Setting the heading row', set_column: 'Matching a column', set_rules: 'Changing rules', edit_number: 'Correcting a number', set_cell: 'Fixing a cell', set_cells: 'Fixing cells', enter_rows: 'Typing the rows in', set_phase: 'Setting phases', add_rule: 'Adding a rule', remove_rule: 'Removing a rule', set_simulation_limits: 'Setting simulation limits', set_simulated_numbers: 'Changing the simulation', use_all_sheets: 'Combining the sheets', report_gap: 'Notifying the Gcaplabs team', undo_last_change: 'Undoing a change', offer_downloads: 'Getting the downloads ready', choose_option: 'Choosing an option', go_to_step: 'Opening a step', code: 'Checking the file closely' };
   var actEl = null;
   function activity(name) { if (actEl) actEl.textContent = (NICE[name] || name) + '…'; }
   function renderSugg() {
@@ -323,7 +397,7 @@
     AS.log.shift();
     if (x.extra && x.extra.source) {
       var ps = x.extra.source; ROWS.kind = ps.rows.kind; ROWS.title = ps.rows.title; ROWS.list = ps.rows.list; if (!$('rows-card').hidden) renderRows();
-      st.src = ps.src; st.origWb = ps.origWb; st.srcName = ps.srcName; st.sheetName = ps.sheetName; st.grid = ps.grid;
+      st.src = ps.src; st.origWb = ps.origWb; st.srcName = ps.srcName; st.sheetName = ps.sheetName; st.grid = ps.grid; st.rawFile = ps.rawFile || null; if (st.rawFile) st.rawFile.sent = false;
       if (!st.src) { st.parsed = null; st.base = null; st.sim = null; st.cfg = x.before.cfg; st.edits = {}; renderLog(); go(1); if (!quiet) bubble('note', 'Undone: ' + x.label + '.'); return x.label; }
     }
     restore(x.before); renderLog(); if (!quiet) bubble('note', 'Undone: ' + x.label + '.');
@@ -486,7 +560,7 @@
 
   function grow() { input.style.height = 'auto'; input.style.height = Math.min(140, input.scrollHeight + 2) + 'px'; }
   input.addEventListener('input', grow);
-  function sourceSnap() { return { src: st.src, origWb: st.origWb, srcName: st.srcName, sheetName: st.sheetName, grid: st.grid, rows: JSON.parse(JSON.stringify(ROWS)) }; }
+  function sourceSnap() { return { src: st.src, origWb: st.origWb, srcName: st.srcName, sheetName: st.sheetName, grid: st.grid, rawFile: st.rawFile, rows: JSON.parse(JSON.stringify(ROWS)) }; }
   function prepareAttachments(text) {
     // Loads an attached spreadsheet (or a Google Sheets link) into the page, then gathers documents and pictures.
     var files = AS.files.filter(function (f) { return f.status === 'ready'; }), notes = [], docs = [], blobs = [];

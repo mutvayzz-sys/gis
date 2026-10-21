@@ -104,26 +104,49 @@ var Engine = (function () {
   var JUDG_WORD = /^(very weak|weak|acceptable|good|very good|outstanding)$/i;
   // Finds subjects laid out side by side: the same measure heading repeated across the header row,
   // usually with subject names in the row above. Returns one column map per subject, or null.
+  // A heading may carry the subject in front of the measure ("Reading % met or exceeded").
+  function measureSplit(raw) {
+    var t = text(raw).replace(/\s+/g, ' '), low = t.toLowerCase();
+    var m = EXP.exec(low) || BET.exec(low) || /judg|rating|evaluation/.exec(low);
+    if (!m) return null;
+    var prefix = t.slice(0, m.index).replace(/[\s%:\-–(]+$/, '').trim();
+    var key = low.slice(m.index).trim(), pct = /%|percent|rate/.test(low);
+    return { prefix: prefix, key: key, pct: pct };
+  }
   function splitWide(grid, r, end, col) {
-    var heads = {}, starts = [];
+    var heads = {}, starts = [], prefixed = {};
     for (var c = 1; c <= grid.maxC; c++) {
       var t = text(get(grid, r, c)).toLowerCase().replace(/\s+/g, ' ');
       if (t && (EXP.test(t) || BET.test(t))) (heads[t] = heads[t] || []).push(c);
+      var ms = measureSplit(get(grid, r, c));
+      // A subject name is a short label, not words like "students that made" or "% of".
+      var okPrefix = ms && ms.prefix && ms.prefix.length <= 40 && /[a-z]/i.test(ms.prefix) && !/%|percent|\b(students?|pupils?|learners?|children|made|making|that|who|which|no\.?|number|of|the|share|proportion|rate|total)\b/i.test(ms.prefix);
+      if (okPrefix && (EXP.test(ms.key) || BET.test(ms.key))) (prefixed[ms.key] = prefixed[ms.key] || []).push({ c: c, prefix: ms.prefix });
     }
     Object.keys(heads).forEach(function (t) { if (heads[t].length > starts.length) starts = heads[t]; });
+    // Subject names inside the headings: the same measure under different subject prefixes.
+    var subjTitles = null;
+    Object.keys(prefixed).forEach(function (k) {
+      var list = prefixed[k], names = list.map(function (x) { return x.prefix.toLowerCase(); });
+      if (list.length > starts.length && list.length >= 2 && new Set(names).size === list.length) { starts = list.map(function (x) { return x.c; }); subjTitles = list.map(function (x) { return x.prefix; }); }
+    });
     if (starts.length < 2) return null;
     var shared = {}; ['phase', 'group', 'grade', 'E', 'F'].forEach(function (k) { if (col[k] != null && col[k] < starts[0]) shared[k] = col[k]; });
     var width = starts[1] - starts[0];
     var lastRow = Math.min(end, r + 60);
     return starts.map(function (st0, gi) {
       var stop = gi + 1 < starts.length ? starts[gi + 1] - 1 : Math.min(grid.maxC, st0 + width - 1);
-      var title = null;
+      var title = subjTitles ? subjTitles[gi] : null;
       for (var tc = st0; tc <= stop && !title; tc++) { var tv = text(get(grid, r - 1, tc)); if (tv && tv.length < 80) title = tv; }
+      // A subject's columns end where the next subject's prefix begins.
+      if (subjTitles) { var lowT = subjTitles[gi].toLowerCase(); for (var ec = st0 + 1; ec <= stop; ec++) { var ht = text(get(grid, r, ec)).toLowerCase(); if (ht && ht.indexOf(lowT) !== 0 && subjTitles.some(function (x) { return ht.indexOf(x.toLowerCase()) === 0; })) { stop = ec - 1; break; } } }
       var cm = Object.assign({}, shared), numeric = [];
       // Own headings for each column win; otherwise go by what the data looks like.
       var own = 0; for (var cc = st0; cc <= stop; cc++) if (text(get(grid, r, cc))) own++;
       for (cc = st0; cc <= stop; cc++) {
         var h = text(get(grid, r, cc)).toLowerCase(), pct = /%|percent|rate/.test(h);
+        if (title && h.indexOf(title.toLowerCase()) === 0) h = h.slice(title.length);
+        h = h.replace(/^[\s%:\-–(]+/, '').replace(/^(?:of\s+)?(?:students|pupils)\s+(?:who\s+)?/, '');
         if (own > 1 && h) {
           if (/judg|rating|evaluation/.test(h)) { cm.K = cc; continue; }
           if (BET.test(h)) { cm[pct ? 'J' : 'H'] = cc; continue; }
@@ -135,8 +158,11 @@ var Engine = (function () {
         if (words >= nums && words) cm.K = cm.K || cc;
         else if (nums) numeric.push({ c: cc, pct: small === nums || pct });
       }
-      if (numeric[0] && cm.G == null && cm.I == null) cm[numeric[0].pct ? 'I' : 'G'] = numeric[0].c;
-      if (numeric[1] && cm.H == null && cm.J == null) cm[numeric[1].pct ? 'J' : 'H'] = numeric[1].c;
+      // Numbers without a recognised heading fill whichever measure is still missing, expected first.
+      numeric.forEach(function (n) {
+        if (cm.G == null && cm.I == null) cm[n.pct ? 'I' : 'G'] = n.c;
+        else if (cm.H == null && cm.J == null) cm[n.pct ? 'J' : 'H'] = n.c;
+      });
       return { col: cm, title: title };
     }).filter(function (p) { return p.col.G != null || p.col.I != null; });
   }

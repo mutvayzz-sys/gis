@@ -8,7 +8,7 @@
 4. builds a clearly labelled simulated scenario with the fewest changes that meet the Weak and Outstanding limits,
 5. downloads one Excel workbook: the original sheet, the corrected sheet and the simulated sheet in the same layout, a full comparison, judgement counts with both limit checks, total judgements from points, a corrections log, planning assumptions and the settings used. Percentages and judgements are formulas.
 
-**No data is held in this repository or the page.** Sheets are read and processed in the person's browser. The only exception is the assistant: when someone asks it something, the parts of the sheet it needs are sent to Claude through `/api/chat`. Nothing is stored.
+**No data is held in this repository or the page.** Sheets are read and processed in the person's browser. The only exception is the assistant: when someone asks it something, the sheet goes to Claude through `/api/chat`. On the site, a copy of the uploaded spreadsheet is put in Claude's Python sandbox (code execution with Anthropic's Excel skill) so the assistant can read any layout; the uploaded copy is deleted straight after, and Anthropic keeps the sandbox for up to 30 days. Nothing is stored by this site.
 
 ## Files
 
@@ -33,7 +33,7 @@ After changing anything in `src/`, run `npm run build` and commit `public/index.
 3. Settings, Variables and Secrets: add a **Secret** `ANTHROPIC_API_KEY`. Without it the page still works; the assistant button stays hidden.
 4. The `routes` entry in `wrangler.jsonc` connects the Worker to `gis.gcaplabs.com` and creates the DNS record.
 
-The model is set by `MODEL` in `wrangler.jsonc`. `/api/chat` only accepts requests from the same site, caps request size and reply length, and only passes on the page's own tools. To limit who can use the assistant (and your API usage), put the site behind Cloudflare Access or add a rate-limiting rule for `/api/chat`.
+The model and effort are set by `MODEL` and `EFFORT` in `wrangler.jsonc` (Claude Haiku 5.5 at `max`). The assistant also gets Claude's code execution tool (`code_execution_20250825`) with the `xlsx` skill; its sandbox id is signed by the Worker so a visitor can only continue their own. `/api/chat` only accepts requests from the same site, caps request size and reply length, and only passes on the page's own tools. To limit who can use the assistant (and your API usage), put the site behind Cloudflare Access or add a rate-limiting rule for `/api/chat`.
 
 Student sheets, reports and exports (`.xlsx`, `.csv`, `.pdf`) are blocked by `.gitignore` so they can't be committed by mistake.
 

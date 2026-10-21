@@ -36,6 +36,7 @@
   }
   function msg(id, t, k) { var m = $(id); if (!m) return; m.textContent = t || ''; m.className = 'msg' + (k ? ' ' + k : ''); }
   function useWorkbook(wb, name, orig) {
+    st.rawFile = st.pendingRaw || null; st.pendingRaw = null;
     st.src = wb; st.origWb = orig || null; st.headerRow = null; st.srcName = name; st.edits = {}; st.manual = null; st.sel = 0; st.wb = null; st.cfg.simLocked = []; st.cfg.simPinned = {};
     var withTables = wb.worksheets.filter(function (ws) { return E.parse(gridFromWs(ws), { sheetName: ws.name }).blocks.length; });
     if (!withTables.length) {
@@ -47,13 +48,48 @@
       msg('msg1', 'Loaded ' + name + ', but the table needs a little help to be read.', '');
       go(2); return;
     }
+    st.tabsWithTables = withTables.map(function (ws) { return ws.name; });
     if (withTables.length > 1) {
       $('sheet-pick').hidden = false;
-      $('sheet-list').innerHTML = withTables.map(function (ws, i) { return '<button type="button" class="btn' + (i === 0 ? ' primary' : '') + '" data-sheet="' + esc(ws.name) + '">' + esc(ws.name) + '</button>'; }).join('');
+      $('sheet-list').innerHTML = '<button type="button" class="btn" data-sheet="' + ALL_TABS + '">All ' + withTables.length + ' Sheets Together</button>' + withTables.map(function (ws, i) { return '<button type="button" class="btn' + (i === 0 ? ' primary' : '') + '" data-sheet="' + esc(ws.name) + '">' + esc(ws.name) + '</button>'; }).join('');
     } else $('sheet-pick').hidden = true;
     pickSheet(withTables[0].name);
-    msg('msg1', 'Loaded ' + name + '.', 'ok');
+    msg('msg1', withTables.length > 1 ? 'Loaded ' + name + '. It has ' + withTables.length + ' sheets with results; showing “' + withTables[0].name + '”. Choose another, or all sheets together so the limits apply across every sheet.' : 'Loaded ' + name + '.', 'ok');
     go(2);
+  }
+  // Several tabs (for example one per subject) stacked into one sheet, so the limits apply across all of them.
+  var ALL_TABS = '__all__';
+  function combineSheets(wb, names) {
+    var ws = wb.getWorksheet('All sheets') || wb.addWorksheet('All sheets'), r0 = 0;
+    names.forEach(function (n) {
+      var src = wb.getWorksheet(n); if (!src || src === ws) return;
+      var t = ws.getCell(r0 + 1, 1); t.value = n; t.font = { bold: true, size: 13 }; r0 += 2;
+      var maxR = 0;
+      src.eachRow({ includeEmpty: false }, function (row, r) {
+        maxR = Math.max(maxR, r);
+        if (row.height) ws.getRow(r0 + r).height = row.height;
+        row.eachCell({ includeEmpty: false }, function (cell, c) {
+          var v = cell.value; if (cell.isMerged && cell.master !== cell) v = null;
+          if (v && typeof v === 'object' && ('formula' in v || 'sharedFormula' in v)) v = v.result == null ? null : v.result;
+          var d = ws.getCell(r0 + r, c); d.value = v; try { d.style = JSON.parse(JSON.stringify(cell.style || {})); } catch (e) { }
+        });
+      });
+      (src.model.merges || []).forEach(function (m) {
+        var mm = /^([A-Z]+)(\d+):([A-Z]+)(\d+)$/.exec(m); if (!mm) return;
+        try { ws.mergeCells(mm[1] + (+mm[2] + r0) + ':' + mm[3] + (+mm[4] + r0)); } catch (e) { }
+      });
+      for (var c = 1; c <= (src.columnCount || 0); c++) { var w = src.getColumn(c).width; if (w && (!ws.getColumn(c).width || ws.getColumn(c).width < w)) ws.getColumn(c).width = w; }
+      r0 += maxR + 2;
+    });
+    return ws.name;
+  }
+  function useAllSheets() {
+    var names = (st.tabsWithTables || []).filter(function (n) { return n !== 'All sheets'; });
+    if (names.length < 2) return false;
+    var n1 = combineSheets(st.src, names); if (st.origWb) combineSheets(st.origWb, names);
+    pickSheet(n1); msg('msg1', 'Using all ' + names.length + ' sheets together: ' + names.join(', ') + '.', 'ok');
+    Array.prototype.forEach.call(document.querySelectorAll('[data-sheet]'), function (b) { b.classList.toggle('primary', b.dataset.sheet === ALL_TABS); });
+    return true;
   }
   function pickSheet(name) {
     st.sheetName = name; st.headerRow = null; st.grid = gridFromWs(st.src.getWorksheet(name)); st.cfg.columns = {}; st.edits = {}; st.sel = 0; st.cfg.simLocked = []; st.cfg.simPinned = {};
@@ -64,8 +100,9 @@
   // Loads spreadsheet bytes into the page. Resolves {ok, error}.
   function loadSheetBuffer(buf, name, ext) {
     ext = (ext || (name.split('.').pop() || '')).toLowerCase();
+    st.pendingRaw = { buf: buf.slice(0), name: name, ext: ext, sent: false }; // the file as uploaded, for the assistant's sandbox
     return new Promise(function (resolve) {
-      function fail(t) { msg('msg1', t, 'bad'); resolve({ ok: false, error: t }); }
+      function fail(t) { st.pendingRaw = null; msg('msg1', t, 'bad'); resolve({ ok: false, error: t }); }
       if (buf.byteLength < 200 && (ext === 'xlsx' || ext === 'xlsm')) return fail('This file is almost empty (' + buf.byteLength + ' bytes), so it is not a real spreadsheet. It was probably a failed download. Download it again and check it opens in Excel.');
       if (ext === 'xlsx' || ext === 'xlsm') {
         if (typeof ExcelJS === 'undefined') return fail('The spreadsheet reader did not load. Reload the page, or enter the rows instead.');
@@ -116,7 +153,7 @@
   ['dragenter', 'dragover'].forEach(function (t) { drop.addEventListener(t, function (e) { e.preventDefault(); drop.classList.add('over'); }); });
   ['dragleave', 'drop'].forEach(function (t) { drop.addEventListener(t, function (e) { e.preventDefault(); drop.classList.remove('over'); }); });
   drop.addEventListener('drop', function (e) { readFile(e.dataTransfer && e.dataTransfer.files && e.dataTransfer.files[0]); });
-  $('sheet-list').addEventListener('click', function (e) { var b = e.target.closest('[data-sheet]'); if (b) pickSheet(b.dataset.sheet); });
+  $('sheet-list').addEventListener('click', function (e) { var b = e.target.closest('[data-sheet]'); if (!b) return; if (b.dataset.sheet === ALL_TABS) useAllSheets(); else pickSheet(b.dataset.sheet); });
   /* ---------- entering rows by hand (or pasting cells from Excel) ---------- */
   var ROWS = { kind: 'counts', title: '', list: [] };
   var RKEYS = ['phase', 'grade', 'E', 'G', 'H'];
@@ -224,7 +261,7 @@
     pre = pre.replace(/[\s:,\-–]+$/, '').trim();
     if (pre.length >= 4) return pre;
     // Generic tab names ("Sheet1") say nothing, so use the file name instead.
-    if (st.sheetName && !/^(sheet|tab|data|feuil|tabelle|hoja)\s*\d*$/i.test(st.sheetName)) return st.sheetName;
+    if (st.sheetName && !/^(sheet|tab|data|feuil|tabelle|hoja)\s*\d*$|^all sheets$/i.test(st.sheetName)) return st.sheetName;
     var fn = String(st.srcName || '').replace(/\.[a-z0-9]+$/i, '').replace(/^[0-9a-f]{8}-/i, '').replace(/[_]+/g, ' ').replace(/\s+\d{1,3}$/, '').replace(/\s*\(\d+\)$/, '').trim();
     return fn || st.sheetName || 'Progress';
   }

@@ -36,6 +36,56 @@ async function openContainer(env, token) {
   return /^[A-Za-z0-9_-]{4,150}$/.test(id) && (await sign(env, id)) === token.slice(i + 1) ? id : null;
 }
 function apiHeaders(env, extra) { return Object.assign({ 'x-api-key': env.ANTHROPIC_API_KEY, 'anthropic-version': '2023-06-01' }, extra || {}); }
+// Long runs (max effort, code in the sandbox) can go minutes without a byte, and an idle request is cut off
+// (HTTP 524). So Claude's reply is streamed and put back together here into one message.
+async function claudeStream(env, payload) {
+  const res = await fetch(base(env) + '/messages', { method: 'POST', headers: apiHeaders(env, { 'content-type': 'application/json' }), body: JSON.stringify(Object.assign({}, payload, { stream: true })) });
+  if (!res.ok) { const raw = await res.text(); let data = {}; try { data = JSON.parse(raw); } catch { /* not JSON */ } return { ok: false, status: res.status, data, raw }; }
+  const msg = { content: [], stop_reason: null, container: null }, partial = {};
+  let err = null, buf = '';
+  const reader = res.body.getReader(), dec = new TextDecoder();
+  const handle = (ev) => {
+    const b = ev.index != null ? msg.content[ev.index] : null, d = ev.delta || {};
+    if (ev.type === 'message_start') { if (ev.message && ev.message.container) msg.container = ev.message.container; }
+    else if (ev.type === 'content_block_start') { msg.content[ev.index] = ev.content_block; if (/tool_use$/.test(ev.content_block.type)) partial[ev.index] = ''; }
+    else if (ev.type === 'content_block_delta' && b) {
+      if (d.type === 'text_delta') b.text = (b.text || '') + d.text;
+      else if (d.type === 'thinking_delta') b.thinking = (b.thinking || '') + d.thinking;
+      else if (d.type === 'signature_delta') b.signature = (b.signature || '') + d.signature;
+      else if (d.type === 'input_json_delta') partial[ev.index] = (partial[ev.index] || '') + d.partial_json;
+      else if (d.type === 'citations_delta') (b.citations = b.citations || []).push(d.citation);
+    } else if (ev.type === 'content_block_stop' && partial[ev.index] != null) {
+      try { b.input = partial[ev.index] ? JSON.parse(partial[ev.index]) : {}; } catch { b.input = {}; }
+      delete partial[ev.index];
+    } else if (ev.type === 'message_delta') { if (d.stop_reason) msg.stop_reason = d.stop_reason; if (d.container) msg.container = d.container; if (ev.container) msg.container = ev.container; }
+    else if (ev.type === 'error') err = ev.error || { message: 'stream error' };
+  };
+  for (;;) {
+    const { done, value } = await reader.read();
+    if (value) buf += dec.decode(value, { stream: true });
+    let i;
+    while ((i = buf.indexOf('\n\n')) >= 0) {
+      const chunk = buf.slice(0, i); buf = buf.slice(i + 2);
+      const data = chunk.split('\n').filter((l) => l.startsWith('data:')).map((l) => l.slice(5).trim()).join('');
+      if (data) { try { handle(JSON.parse(data)); } catch { /* skip a bad line */ } }
+    }
+    if (done) break;
+  }
+  msg.content = msg.content.filter(Boolean);
+  return err ? { ok: false, status: 500, data: { error: err }, raw: '' } : { ok: true, status: 200, data: msg };
+}
+// Sends spaces while the work runs so the visitor's connection stays open, then the JSON (leading spaces are valid JSON).
+function keepAlive(ctx, work) {
+  const { readable, writable } = new TransformStream(), w = writable.getWriter(), enc = new TextEncoder();
+  const tick = setInterval(() => { w.write(enc.encode(' ')).catch(() => {}); }, 10000);
+  ctx.waitUntil((async () => {
+    let out;
+    try { out = await work(); } catch (e) { out = { _status: 502, error: 'The assistant stopped unexpectedly. Try again.' }; }
+    clearInterval(tick);
+    try { await w.write(enc.encode(JSON.stringify(out))); await w.close(); } catch { /* visitor left */ }
+  })());
+  return new Response(readable, { headers: { 'content-type': 'application/json', 'cache-control': 'no-store' } });
+}
 function base(env) { return env.ANTHROPIC_BASE || API; } // ANTHROPIC_BASE is only for local tests
 async function uploadSheet(env, up) {
   const name = clean(up && up.name, 120).replace(/[<>:"|?*\\/]/g, '_');
@@ -174,31 +224,23 @@ export default {
         }
       }
       const containerId = await openContainer(env, body.container);
-      const call = (cid) => fetch(base(env) + '/messages', {
-        method: 'POST',
-        headers: apiHeaders(env, { 'content-type': 'application/json' }),
-        body: JSON.stringify({ model: env.MODEL || 'claude-haiku-5-5', max_tokens: 32000, output_config: { effort: env.EFFORT || 'max' }, system: PROMPT + SANDBOX_NOTE, messages, tools: tools.concat([CODE_TOOL]), container: cid ? { id: cid, skills: SKILLS } : { skills: SKILLS } })
+      const payload = (cid) => ({ model: env.MODEL || 'claude-haiku-5-5', max_tokens: 32000, output_config: { effort: env.EFFORT || 'max' }, system: PROMPT + SANDBOX_NOTE, messages, tools: tools.concat([CODE_TOOL]), container: cid ? { id: cid, skills: SKILLS } : { skills: SKILLS } });
+      return keepAlive(ctx, async () => {
+        const t0 = Date.now(); let r, failed = '';
+        try { r = await claudeStream(env, payload(containerId)); }
+        catch (e) { failed = String((e && e.message) || e).slice(0, 200); }
+        finally { if (fileId) ctx.waitUntil(fetch(base(env) + '/files/' + fileId, { method: 'DELETE', headers: apiHeaders(env) }).catch(() => {})); }
+        const secs = Math.round((Date.now() - t0) / 1000);
+        if (failed) return { _status: 502, error: 'Claude could not be reached (' + failed + ', after ' + secs + 's). Try again.' };
+        if (!r.ok) {
+          const m = (r.data.error && r.data.error.message) || ('HTTP ' + r.status + ' after ' + secs + 's: ' + clean(r.raw, 200));
+          // A sandbox that expired (they last 30 days) or was lost: the page starts a new one and sends the file again.
+          if (containerId && /container/i.test(m)) return { _status: 409, error: 'container_expired' };
+          return { _status: 502, error: m };
+        }
+        const cid = r.data.container && r.data.container.id;
+        return { content: r.data.content, stop_reason: r.data.stop_reason, container: cid ? cid + '.' + (await sign(env, cid)) : null, uploaded: !!fileId };
       });
-      let res, data = {}, raw = '', failed = '';
-      const t0 = Date.now();
-      try {
-        res = await call(containerId);
-        raw = await res.text();
-        try { data = JSON.parse(raw); } catch { /* not JSON */ }
-      } catch (e) {
-        failed = String((e && e.message) || e).slice(0, 200);
-      } finally {
-        if (fileId) ctx.waitUntil(fetch(base(env) + '/files/' + fileId, { method: 'DELETE', headers: apiHeaders(env) }).catch(() => {}));
-      }
-      if (failed) return json({ error: 'Claude could not be reached (' + failed + ', after ' + Math.round((Date.now() - t0) / 1000) + 's). Try again.' }, 502);
-      if (!res.ok) {
-        const m = (data.error && data.error.message) || ('HTTP ' + res.status + ' after ' + Math.round((Date.now() - t0) / 1000) + 's: ' + clean(raw, 200));
-        // A sandbox that expired (they last 30 days) or was lost: the page starts a new one and sends the file again.
-        if (containerId && /container/i.test(m)) return json({ error: 'container_expired' }, 409);
-        return json({ error: m || 'Claude could not answer right now. Try again.' }, 502);
-      }
-      const cid = data.container && data.container.id;
-      return json({ content: data.content || [], stop_reason: data.stop_reason, container: cid ? cid + '.' + (await sign(env, cid)) : null, uploaded: !!fileId });
     }
 
     return env.ASSETS.fetch(request);

@@ -303,6 +303,9 @@
           if (!r.ok) return r.json().catch(function () { return {}; }).then(function (j) { throw { code: 'api', message: j.error || ('The assistant is unavailable (' + r.status + ').') }; }); return r.json();
         })
         .then(function (res) {
+          // Long replies come back as 200 with the outcome inside (the connection is kept open while Claude works).
+          if (res._status === 409 && !retried) { retried = true; AS.container = null; if (st.rawFile) st.rawFile.sent = false; return round(n); }
+          if (res._status && res._status !== 200) throw { code: 'api', message: res.error || 'The assistant is unavailable right now.' };
           if (res.again) return round(n);
           if (res.container) AS.container = res.container;
           if (res.uploaded && raw) raw.sent = true;

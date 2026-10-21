@@ -224,7 +224,7 @@ export default {
         }
       }
       const containerId = await openContainer(env, body.container);
-      const payload = (cid) => ({ model: env.MODEL || 'claude-haiku-5-5', max_tokens: 32000, output_config: { effort: env.EFFORT || 'max' }, system: PROMPT + SANDBOX_NOTE, messages, tools: tools.concat([CODE_TOOL]), container: cid ? { id: cid, skills: SKILLS } : { skills: SKILLS } });
+      const payload = (cid) => ({ model: env.MODEL || 'claude-haiku-5-5', max_tokens: 64000, output_config: { effort: env.EFFORT || 'max' }, system: PROMPT + SANDBOX_NOTE, messages, tools: tools.concat([CODE_TOOL]), container: cid ? { id: cid, skills: SKILLS } : { skills: SKILLS } });
       return keepAlive(ctx, async () => {
         const t0 = Date.now(); let r, failed = '';
         try { r = await claudeStream(env, payload(containerId)); }

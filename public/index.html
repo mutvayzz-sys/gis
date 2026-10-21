@@ -3348,6 +3348,11 @@ var Grid = (function () {
           if (blocks.some(function (b) { return b.type === 'server_tool_use'; })) activity('code');
           // A long sandbox run is paused by the API; sending the reply back lets it carry on.
           if (res.stop_reason === 'pause_turn') return round(n + 1);
+          if (res.stop_reason === 'max_tokens' && !blocks.some(function (b) { return b.type === 'tool_use'; })) {
+            msgs.pop();
+            if (!said) throw { code: 'api', message: 'The assistant used all its thinking room before answering. Ask again, or split the request into smaller steps.' };
+            return said;
+          }
           var uses = blocks.filter(function (b) { return b.type === 'tool_use'; });
           if (res.stop_reason !== 'tool_use' || !uses.length) return said;
           return Promise.all(uses.map(function (u) {

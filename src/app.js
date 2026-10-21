@@ -206,8 +206,8 @@
     st.sim = E.simulate(st.parsed, st.cfg);
     if (st.sim.options && st.sel >= st.sim.options.length) st.sel = 0;
     st.wb = null;
-    var subj = st.parsed.blocks[0].title;
-    $('title').textContent = subj && subj !== st.sheetName ? subj + ' Progress Judgements' : 'Progress Judgements';
+    var subj = subjectName();
+    $('title').textContent = subj && subj !== 'Progress' ? (/progress$/i.test(subj) ? subj + ' Judgements' : subj + ' Progress Judgements') : 'Progress Judgements';
     render();
   }
   function workbook() {
@@ -222,7 +222,11 @@
     var t = b.map(function (x) { return String(x.title || ''); }), pre = t[0];
     t.forEach(function (x) { while (pre && x.indexOf(pre) !== 0) pre = pre.slice(0, -1); });
     pre = pre.replace(/[\s:,\-–]+$/, '').trim();
-    return pre.length >= 4 ? pre : (st.sheetName || 'Progress');
+    if (pre.length >= 4) return pre;
+    // Generic tab names ("Sheet1") say nothing, so use the file name instead.
+    if (st.sheetName && !/^(sheet|tab|data|feuil|tabelle|hoja)\s*\d*$/i.test(st.sheetName)) return st.sheetName;
+    var fn = String(st.srcName || '').replace(/\.[a-z0-9]+$/i, '').replace(/^[0-9a-f]{8}-/i, '').replace(/[_]+/g, ' ').replace(/\s+\d{1,3}$/, '').replace(/\s*\(\d+\)$/, '').trim();
+    return fn || st.sheetName || 'Progress';
   }
   function fileBase() { return subjectName().replace(/[\\/:*?"<>|]/g, '-'); }
   // One plain-language account of the results, used by the PDF report and the workbook's Summary sheet.
@@ -421,7 +425,7 @@
   function barsBlock(m, c) {
     var h = '<div class="bars">';
     m.units.forEach(function (u) {
-      if (m.units.length > 1) h += '<div class="muted small" style="margin-top:6px"><b>' + esc((st.parsed.blocks.length > 1 ? u.block + ', ' : '') + (u.group !== 'All students' ? u.group + ', ' : '') + 'Phase ' + u.phase) + '</b></div>';
+      if (m.units.length > 1) h += '<div class="muted small" style="margin-top:6px"><b>' + esc((st.parsed.blocks.length > 1 ? u.block + ', ' : '') + (u.group !== 'All students' ? u.group + ', ' : '') + E.phaseLabel(u.phase)) + '</b></div>';
       u.grades.forEach(function (g) {
         h += '<div class="bar-row"><span class="nm">' + esc(g.grade) + '</span><span class="bar-track"><span class="bar-fill k-' + (KEY[g.judg] || 'acc') + '" style="width:' + Math.max(0, Math.min(100, (g.I || 0) * 100)) + '%"></span><span class="bar-line" style="left:' + c.acc * 100 + '%"></span></span><span class="bar-val">' + pc(g.I) + ' ' + dot(g.judg) + '</span></div>';
       });
@@ -431,7 +435,7 @@
   }
   function phaseCards(m, c) {
     return m.units.filter(function (u) { return u.total; }).map(function (u) {
-      var t = u.total, title = (st.parsed.blocks.length > 1 ? u.block + ', ' : '') + (u.group !== 'All students' && m.units.length > 1 ? u.group + ', ' : '') + 'Phase ' + u.phase;
+      var t = u.total, title = (st.parsed.blocks.length > 1 ? u.block + ', ' : '') + (u.group !== 'All students' && m.units.length > 1 ? u.group + ', ' : '') + E.phaseLabel(u.phase);
       var body;
       if (c.totalMethod === 'points') {
         body = '<div class="pts-row">' + u.grades.map(function (g) { return '<span class="chip" title="' + esc(g.grade + ': ' + g.judg) + '">' + dot(g.judg) + esc(short(g)) + ' ' + (g.pts == null ? '–' : g.pts) + '</span>'; }).join('') + '</div>' +

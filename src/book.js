@@ -89,21 +89,26 @@ var Book = (function (E) {
     var byId = {}; model.items.forEach(function (it) { byId[it.id] = it; });
     var baseById = {}; (base || model).items.forEach(function (it) { baseById[it.id] = it; });
     var fixes = E.findFixes(parsed, cfg).fixes;
-    var helpers = {};
+    var helpers = {}, taken = [];
+    // Tables side by side share rows, so each one's helper columns go to the right of everything before it.
+    var sheetMax = 0; parsed.blocks.forEach(function (b) { Object.keys(b.col).forEach(function (k) { if (b.col[k] != null) sheetMax = Math.max(sheetMax, b.col[k]); }); });
     parsed.blocks.forEach(function (b) {
       var c = b.col, maxC = 0;
       Object.keys(c).forEach(function (k) { if (c[k] != null) maxC = Math.max(maxC, c[k]); });
+      if (b.wide) maxC = Math.max(maxC, sheetMax);
+      taken.forEach(function (t) { if (t.r1 <= b.endRow && b.headerRow <= t.r2) maxC = Math.max(maxC, t.c2); });
       var nx = maxC + 1, hA = nx++, hP = nx++, hK = c.K || nx++;
       var dG = c.G == null, dH = c.H == null, hG = dG ? nx++ : c.G, hH = dH ? nx++ : c.H;
       var colOf = { E: c.E, G: hG, H: hH };
       helpers[b.id] = { A: hA, P: hP, K: hK, G: hG, H: hH };
+      taken.push({ r1: b.headerRow, r2: b.endRow, c2: nx - 1 });
       var hr = b.headerRow;
       var heads = [[hA, 'Assessed students (calculated)'], [hP, 'Points (component) / average (total)']];
       if (!c.K) heads.push([hK, 'Judgement (calculated)']);
       if (dG) heads.push([hG, 'Expected or better, students (worked out from %)']);
       if (dH) heads.push([hH, 'Better than expected, students (worked out from %)']);
       heads.forEach(function (h) {
-        var x = ws.getCell(hr, h[0]); x.value = h[1]; x.font = font({ bold: true, color: 'FF595959', size: 9 }); x.fill = fill('FFF2F2F2');
+        var x = ws.getCell(hr, h[0]); x.value = (b.wide ? b.title + ': ' : '') + h[1]; x.font = font({ bold: true, color: 'FF595959', size: 9 }); x.fill = fill('FFF2F2F2');
         x.alignment = { horizontal: 'center', vertical: 'middle', wrapText: true }; x.border = { top: M, bottom: M, left: T, right: T };
         if (ws.getColumn(h[0]).width == null || ws.getColumn(h[0]).width < 12) ws.getColumn(h[0]).width = 14;
       });
@@ -159,6 +164,9 @@ var Book = (function (E) {
         var fixed = {};
         ['E', 'G', 'H'].forEach(function (k) {
           if (colOf[k] == null) return;
+          // Shared columns (students) belong to every table side by side, and a merged label must not be overwritten.
+          if (k === 'E' && b.wide) return;
+          var tgt = ws.getCell(r, colOf[k]); if (tgt.isMerged && tgt.master && tgt.master.address !== tgt.address) return;
           var x = setF(colOf[k], r, sumF(colOf[k]), it[k], '0');
           if (colOf[k] !== c[k]) styleHelper(x, true);
           if (mode === 'actual' && c[k] != null && t0[k] != null && Math.abs(t0[k] - it[k]) > 1e-6) { x.fill = fill(C.orange); x.note = 'Corrected. The file said ' + E.fmt(t0[k]) + ' (it should be the sum of the rows).'; fixed[k] = 1; }

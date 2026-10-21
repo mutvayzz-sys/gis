@@ -7,7 +7,15 @@
     return '<section class="pg' + (wide ? ' wide' : '') + '" id="r-' + id + '"><h2>' + (num ? '<span class="num">' + num + '</span>' : '') + esc(title) + '</h2>' + inner + '</section>';
   }
   function simBanner() { return '<p class="simban">SIMULATED. Not actual results. Do not report as findings.</p>'; }
-  function gridOf(wb, name, maxCols) { var ws = wb && wb.getWorksheet(name); return ws ? '<div class="xl"><div class="xl-scroll">' + Grid.render(ws, { maxRows: 120, maxCols: maxCols || 26 }) + '</div></div>' : ''; }
+  // Sheets wider than the page are scaled down to fit (landscape A4 is about 1000 CSS pixels wide).
+  function gridOf(wb, name, maxCols, room) {
+    var ws = wb && wb.getWorksheet(name); if (!ws) return '';
+    var cols = Math.min(maxCols || 26, ws.columnCount || 26), w = 26;
+    for (var c = 1; c <= cols; c++) w += Math.max(18, Math.min(220, (ws.getColumn(c).width || 9) * 7.2));
+    var z = Math.min(1, (room || 1000) / w);
+    return '<div class="xl"><div class="xl-scroll"' + (z < 1 ? ' style="zoom:' + z.toFixed(3) + '"' : '') + '>' + Grid.render(ws, { maxRows: 120, maxCols: maxCols || 26 }) + '</div></div>';
+  }
+  function judgementsTitle(subj) { return /progress$/i.test(subj) ? subj + ' Judgements' : subj + ' Progress Judgements'; }
   function tableCols() { var mx = 0; st.parsed.blocks.forEach(function (b) { Object.keys(b.col).forEach(function (k) { if (b.col[k] != null) mx = Math.max(mx, b.col[k]); }); }); return mx || 26; }
   function gradeRange(items) {
     var g = items.filter(function (x) { return x.kind === 'grade'; });
@@ -49,7 +57,7 @@
     if (m.items.some(function (x) { return x.roundingFlag; })) findings.push('<strong>A rounding rule is needed.</strong> Some phase averages have decimals and no rounding rule was given, so the nearest whole point is used for now.');
     var toc = ['How judgements are decided', 'The sheet as received', 'Corrections made', 'Corrected results', 'Judgement counts'].concat(A ? ['Simulated options' + (opts.length > 1 ? ' A to ' + letter(opts.length - 1) : '')] : []).concat(['Notes']);
     var cover = '<section class="cover">' +
-      '<p class="eyebrow">Progress review</p><h1>' + esc(subj) + ' Progress Judgements</h1>' +
+      '<p class="eyebrow">Progress review</p><h1>' + esc(judgementsTitle(subj)) + '</h1>' +
       '<p class="sub">Checking the overall judgements against the limits: no more than ' + P1(c.capWeak) + ' Weak and no more than ' + P1(c.capOut) + ' Outstanding.</p>' +
       '<dl class="meta"><div><dt>Prepared</dt><dd>' + esc(today) + '</dd></div><div><dt>Source file</dt><dd>' + esc(st.srcName || '') + '</dd></div><div><dt>Group</dt><dd>' + esc(groups.join(', ') + (gradeRange(m.items) ? ', ' + gradeRange(m.items) : '')) + '</dd></div></dl>' +
       '<dl class="stats rep-stats">' +
@@ -73,11 +81,11 @@
       '<p class="note">Counted toward the limits: ' + esc(basisTxt) + '. Phase totals are judged ' + (c.totalMethod === 'points' ? 'from the average of their grade judgements (points ' + E.CATS.filter(function (x) { return c.points[x] != null; }).slice().reverse().map(function (x) { return x + ' ' + c.points[x]; }).join(', ') + '), rounded ' + (c.rounding === 'unspecified' ? 'to the nearest point until a rule is confirmed' : c.rounding) : 'from their summed student counts') + '.' + (c.useAssessed ? ' Percentages are out of the students assessed.' : '') + '</p>';
 
     /* 2 original, 3 corrections, 4 corrected */
-    var origHtml = '<p class="lead">Exactly as received. The mistakes are explained in section 3.</p>' + gridOf(wbSel, Book.NAMES.orig) +
+    var origHtml = '<p class="lead">Exactly as received. The mistakes are explained in section 3.</p>' + gridOf(wbSel, Book.NAMES.orig, null, 1000) +
       (realFixes.length ? '<ul class="xl-notes">' + realFixes.map(function (f) { return '<li>' + esc(f.what) + '.</li>'; }).join('') + '</ul>' : '');
     var corrHtml = '<p class="lead">' + (realFixes.length ? 'Only calculation and layout mistakes were fixed. No student numbers were changed.' : 'No mistakes needed fixing.') + (fx.length > realFixes.length ? ' Notes about how the sheet was read are listed too.' : '') + '</p>' +
       (fx.length ? '<table class="cmp full corr"><thead><tr><th class="n">#</th><th>Where</th><th>What was wrong</th><th>Effect on judgement</th></tr></thead><tbody>' + fx.map(function (f, i) { return '<tr><td class="n">' + (i + 1) + '</td><th scope="row">' + esc(f.what) + '</th><td>' + esc(f.detail) + '</td><td>' + esc(f.effect || '') + '</td></tr>'; }).join('') + '</tbody></table>' : '');
-    var fixedHtml = '<p class="lead">The same sheet with the totals added up properly' + (fx.some(function (f) { return f.kind === 'label'; }) ? ' and the phase labels in the right place' : '') + '. These are the real results. Orange cells were corrected.</p>' + gridOf(wbSel, Book.NAMES.actual);
+    var fixedHtml = '<p class="lead">The same sheet with the totals added up properly' + (fx.some(function (f) { return f.kind === 'label'; }) ? ' and the phase labels in the right place' : '') + '. These are the real results. Orange cells were corrected.</p>' + gridOf(wbSel, Book.NAMES.actual, multi ? tableCols() : null, 1000);
     var cards = phaseCards(m, c);
     var detailHtml = '<h3>The big picture</h3><p class="note">Each box is one judgement.</p>' + tilesBlock(m, null, c) +
       '<h3>Grade by grade</h3><p class="note">The bar is the share making expected or better progress; the black line is the ' + P1(c.acc) + ' mark.</p>' + barsBlock(m, c) +
@@ -126,7 +134,9 @@
         var wbO = i === sel ? wbSel : Book.build({ srcWb: st.src, origWb: st.origWb, sheetName: st.sheetName, parsed: st.parsed, cfg: c, base: m, sim: s, sel: i });
         var list = '<ul class="chg-list">' + o.cells.map(function (x) { return '<li><b>' + esc(label(x.to)) + '</b> ' + x.from.G + ' to ' + x.to.G + ' of ' + x.from.A + (x.dH ? ', better than expected ' + x.from.H + ' to ' + x.to.H : '') + ': ' + tag(x.from.judg) + ' <span class="arrow">→</span> ' + tag(x.to.judg) + (x.pp > c.substantialPts ? ' <b class="bad">' + x.pp.toFixed(1) + ' points, substantial</b>' : '') + '</li>'; }).join('') +
           o.changed.filter(function (x) { return x.from.kind === 'total'; }).map(function (x) { return '<li><b>' + esc(label(x.to)) + '</b> changes on its own: ' + tag(x.from.judg) + ' <span class="arrow">→</span> ' + tag(x.to.judg) + '</li>'; }).join('') + '</ul>';
-        return sec('opt' + i, '', 'Option ' + letter(i) + ': ' + o.students + ' more students' + (i === sel ? ' (chosen)' : ''), simBanner() + '<div class="optwrap">' + gridOf(wbO, simName, tableCols()) + '<div class="optside"><p class="small"><strong>' + o.students + ' more students</strong> make the progress shown. ' + o.changed.length + ' judgements change:</p>' + list + '<p class="note">Blue cells are simulated. All other cells are the real, corrected numbers.</p></div></div>', true);
+        // Long change lists go under the sheet in columns, so the page does not overflow.
+        var stacked = o.cells.length + o.changed.filter(function (x) { return x.from.kind === 'total'; }).length > 8;
+        return sec('opt' + i, '', 'Option ' + letter(i) + ': ' + o.students + ' more students' + (i === sel ? ' (chosen)' : ''), simBanner() + '<div class="optwrap' + (stacked ? ' stacked' : '') + '">' + gridOf(wbO, simName, tableCols(), stacked ? 1000 : 720) + '<div class="optside"><p class="small"><strong>' + o.students + ' more students</strong> make the progress shown. ' + o.changed.length + ' judgements change:</p>' + list + '<p class="note">Blue cells are simulated. All other cells are the real, corrected numbers.</p></div></div>', true);
       }).join('');
     }
 
@@ -167,8 +177,8 @@
       sec('notes', ++n, 'Notes', '<ul class="plain">' + notes.map(function (x) { return '<li>' + x + '</li>'; }).join('') + '</ul>') + asstHtml;
 
     var pageCss = Array.prototype.map.call(document.querySelectorAll('style'), function (x) { return x.textContent; }).join('\n');
-    var title = esc(subj) + ' Progress Judgements: Review';
-    var footer = esc(subj) + ' Progress Judgements: review, ' + esc(today);
+    var title = esc(judgementsTitle(subj)) + ': Review';
+    var footer = esc(judgementsTitle(subj)) + ': review, ' + esc(today);
     return '<!doctype html><html lang="en" data-theme="light"><head><meta charset="utf-8"><title>' + title + '</title>' +
       '<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Inter:opsz,wght@14..32,400..700&display=swap">' +
       '<style>' + pageCss + '\n' + REPORT_CSS.split('%FOOTER%').join(footer.replace(/"/g, '\\"')) + '</style></head><body class="report">' + body + '</body></html>';
@@ -217,6 +227,7 @@
     'body.report .sr { position: absolute; width: 1px; height: 1px; overflow: hidden; clip: rect(0 0 0 0); }',
     '.optwrap { display: grid; grid-template-columns: auto minmax(220px, 1fr); gap: 16px; align-items: start; }',
     '.optside { display: grid; gap: 8px; } .chg-list { margin: 0; padding-left: 1.1em; display: grid; gap: 4px; font-size: 9pt; }',
+    '.optwrap.stacked { grid-template-columns: minmax(0, 1fr); gap: 10px; } .optwrap.stacked .chg-list { display: block; columns: 3; column-gap: 20px; font-size: 8pt; } .optwrap.stacked .chg-list li { break-inside: avoid; margin-bottom: 3px; }',
     '.plain { margin: 0; padding-left: 1.2em; display: grid; gap: 8px; }',
     '.turn { border-top: 1px solid #e3e3e6; padding: 8px 0; } .turn b { display: block; font-size: 9pt; color: #6e6e73; } .turn.user b { color: #0000da; } .turn p { margin: 4px 0; } .turn ul { margin: 4px 0; }',
     'body.report .phasecards { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 10px; }',

@@ -66,6 +66,7 @@ var Engine = (function () {
     if (!names) names = cats.join(' or ');
     return (r.op === 'min' ? 'At least ' : 'No more than ') + Math.round(r.share * 1000) / 10 + '% ' + names;
   }
+  function phaseLabel(p) { p = String(p == null ? '' : p).trim(); return /^(phase|key stage|stage|cycle)\b/i.test(p) ? p : 'Phase ' + p; }
   function isWeakish(j, c) { return j === 'Weak' || (c.vwCountsAsWeak && j === 'Very Weak'); }
 
   /* ---------- reading a sheet ---------- */
@@ -78,7 +79,7 @@ var Engine = (function () {
   function get(grid, r, c) { var v = grid.cells[r + ',' + c]; return v === undefined ? null : v; }
   function text(v) { return v == null ? '' : String(v).trim(); }
 
-  var EXP = /expected or better|expected or above|at or above|met or exceeded|met (?:the )?(?:projected|expected|growth|target|typical)|achieved (?:expected|growth|target|typical)|on track|at expected|meeting (?:expected|growth|target)/;
+  var EXP = /expected or better|expected or above|at or above|met or exceeded|met\s*(?:&|and|\/|\+)\s*exceed|met (?:the )?(?:projected|expected|growth|target|typical)|achieved (?:expected|growth|target|typical)|on track|at expected|meeting (?:expected|growth|target)/;
   var BET = /better than expected|above expected|exceeded (?:the )?(?:projected|expected|growth|target|typical)|^exceeded|above (?:target|typical)|accelerated|high growth|^above$|beyond expected|more than expected/;
   function detectHeader(grid, r, loose) {
     var col = {}, hits = 0;
@@ -88,7 +89,7 @@ var Engine = (function () {
       var pct = /%|percent|\brate\b|proportion/.test(s);
       if (!pct && /phase|key stage|cycle|^stage$|school section/.test(s) && col.phase == null) col.phase = c;
       else if (!pct && col.E == null && /(?:no\.?|number|num|count|total|^n)\s*(?:of\s*)?(?:students|pupils|learners|tested|assessed|children)|students in|cohort size|^n$|^students$|^pupils$|^learners$|^(?:students |pupils )?tested$|enrol/.test(s)) { col.E = c; hits++; }
-      else if (pct && /assessed|tested|participation|took/.test(s) && col.F == null) col.F = c;
+      else if (/assessed|participation|took the test/.test(s) && !/^(?:no\.?|number)/.test(s) && col.F == null) col.F = c;
       else if (!pct && /grade|year|\byr\b|class|level/.test(s) && !EXP.test(s) && !BET.test(s) && col.grade == null) { col.grade = c; hits++; }
       else if (/group|subgroup|category|cohort|subject|course/.test(s) && !EXP.test(s) && !BET.test(s) && col.group == null) col.group = c;
       else if (EXP.test(s)) { if (pct) { if (col.I == null) { col.I = c; hits++; } } else if (col.G == null) { col.G = c; hits++; } }
@@ -100,27 +101,75 @@ var Engine = (function () {
     return hits >= 3 && col.grade != null && (col.G != null || col.I != null) ? col : null;
   }
 
+  var JUDG_WORD = /^(very weak|weak|acceptable|good|very good|outstanding)$/i;
+  // Finds subjects laid out side by side: the same measure heading repeated across the header row,
+  // usually with subject names in the row above. Returns one column map per subject, or null.
+  function splitWide(grid, r, end, col) {
+    var heads = {}, starts = [];
+    for (var c = 1; c <= grid.maxC; c++) {
+      var t = text(get(grid, r, c)).toLowerCase().replace(/\s+/g, ' ');
+      if (t && (EXP.test(t) || BET.test(t))) (heads[t] = heads[t] || []).push(c);
+    }
+    Object.keys(heads).forEach(function (t) { if (heads[t].length > starts.length) starts = heads[t]; });
+    if (starts.length < 2) return null;
+    var shared = {}; ['phase', 'group', 'grade', 'E', 'F'].forEach(function (k) { if (col[k] != null && col[k] < starts[0]) shared[k] = col[k]; });
+    var width = starts[1] - starts[0];
+    var lastRow = Math.min(end, r + 60);
+    return starts.map(function (st0, gi) {
+      var stop = gi + 1 < starts.length ? starts[gi + 1] - 1 : Math.min(grid.maxC, st0 + width - 1);
+      var title = null;
+      for (var tc = st0; tc <= stop && !title; tc++) { var tv = text(get(grid, r - 1, tc)); if (tv && tv.length < 80) title = tv; }
+      var cm = Object.assign({}, shared), numeric = [];
+      // Own headings for each column win; otherwise go by what the data looks like.
+      var own = 0; for (var cc = st0; cc <= stop; cc++) if (text(get(grid, r, cc))) own++;
+      for (cc = st0; cc <= stop; cc++) {
+        var h = text(get(grid, r, cc)).toLowerCase(), pct = /%|percent|rate/.test(h);
+        if (own > 1 && h) {
+          if (/judg|rating|evaluation/.test(h)) { cm.K = cc; continue; }
+          if (BET.test(h)) { cm[pct ? 'J' : 'H'] = cc; continue; }
+          if (EXP.test(h)) { cm[pct ? 'I' : 'G'] = cc; continue; }
+        }
+        var nums = 0, words = 0, small = 0, total = 0;
+        for (var rr = r + 1; rr <= lastRow; rr++) { var v = get(grid, rr, cc); if (v == null || v === '') continue; total++; if (typeof v === 'number') { nums++; if (v <= 1) small++; } else if (JUDG_WORD.test(text(v))) words++; else if (!isNaN(parseFloat(String(v).replace('%', '')))) { nums++; } }
+        if (!total) { if (own <= 1 && numeric.length < 2 && cm.K == null) numeric.push({ c: cc, pct: true }); continue; }
+        if (words >= nums && words) cm.K = cm.K || cc;
+        else if (nums) numeric.push({ c: cc, pct: small === nums || pct });
+      }
+      if (numeric[0] && cm.G == null && cm.I == null) cm[numeric[0].pct ? 'I' : 'G'] = numeric[0].c;
+      if (numeric[1] && cm.H == null && cm.J == null) cm[numeric[1].pct ? 'J' : 'H'] = numeric[1].c;
+      return { col: cm, title: title };
+    }).filter(function (p) { return p.col.G != null || p.col.I != null; });
+  }
   function parse(grid, opt) {
     opt = opt || {};
     var over = opt.columns || {};
     var heads = [];
     if (opt.headerRow) heads.push({ r: +opt.headerRow, col: detectHeader(grid, +opt.headerRow, true) });
     else for (var r = 1; r <= grid.maxR; r++) { var h = detectHeader(grid, r); if (h) heads.push({ r: r, col: h }); }
-    var blocks = [];
+    var blocks = [], nb = 0;
     heads.forEach(function (h, i) {
-      var col = Object.assign({}, h.col);
-      ROLES.forEach(function (k) { if (over[k] !== undefined) col[k] = over[k] === '' ? null : over[k]; });
       var end = i + 1 < heads.length ? heads[i + 1].r - 1 : grid.maxR;
       var prevEnd = i > 0 ? heads[i - 1].r : 0;
       var title = null;
       for (var tr = h.r - 1; tr > prevEnd && !title; tr--) for (var tc = 1; tc <= grid.maxC && !title; tc++) { var tv = get(grid, tr, tc); if (typeof tv === 'string' && tv.trim() && tv.length < 80) title = tv.trim(); }
-      blocks.push({ id: 'b' + i, headerRow: h.r, endRow: end, col: col, title: title || (opt.sheetName || 'Table ' + (i + 1)), rows: [], totals: [] });
+      // Several subjects side by side under one header row become one table each.
+      var parts = splitWide(grid, h.r, end, h.col) || [{ col: h.col, title: null }];
+      parts.forEach(function (pt) {
+        var col = Object.assign({}, pt.col);
+        ROLES.forEach(function (k) { if (over[k] !== undefined) col[k] = over[k] === '' ? null : over[k]; });
+        blocks.push({ id: 'b' + (nb++), headerRow: h.r, endRow: end, col: col, title: pt.title || title || (opt.sheetName || 'Table ' + (i + 1)), sheetTitle: title, wide: parts.length > 1, rows: [], totals: [], skipped: [] });
+      });
     });
     blocks.forEach(function (b) {
       var c = b.col, carryP = null, carryG = null, pend = [], pendExplicit = null;
       for (var r = b.headerRow + 1; r <= b.endRow; r++) {
         var gv = c.grade != null ? text(get(grid, r, c.grade)) : '';
-        if (!gv) continue;
+        if (!gv) {
+          // A total row may carry its label in the phase or group column, or in a merged cell to the left.
+          var firstData = Math.min.apply(null, ['E', 'F', 'G', 'H', 'I', 'J'].map(function (k) { return c[k] != null ? c[k] : 999; }));
+          for (var lc = 1; lc < Math.min(firstData, 30) && !gv; lc++) { var lt = text(get(grid, r, lc)); if (/^(total|overall|all grades|phase total)\b/i.test(lt) || /\btotal\b/i.test(lt)) gv = lt; }
+          if (!gv) continue;
+        } else if (/^\d+$/.test(gv)) gv = 'Grade ' + gv;
         var pl = c.phase != null ? get(grid, r, c.phase) : null;
         if (pl != null && text(pl) !== '') { carryP = text(pl); if (pendExplicit == null) pendExplicit = carryP; }
         var gl = c.group != null ? get(grid, r, c.group) : null;
@@ -139,11 +188,17 @@ var Engine = (function () {
           rec.phase = ph; rec.members = pend.map(function (x) { return x.r; });
           b.totals.push(rec); pend = []; pendExplicit = null;
         } else {
-          if (rec.E == null && rec.G == null && rec.H == null && rec.I == null) continue;
+          if (rec.G == null && rec.H == null && rec.I == null && rec.J == null) { if (rec.E != null) b.skipped.push(rec.grade); continue; }
           b.rows.push(rec); pend.push(rec);
         }
       }
       pend.forEach(function (x) { x.phase = x.label != null ? x.label : '1'; });
+      // "Assessed" may be a percentage (100), a fraction (1) or a count of students; store it as a percentage.
+      if (c.F != null) {
+        var fr = b.rows.filter(function (x) { return x.F != null && x.E; });
+        var asCount = fr.length && !fr.some(function (x) { return x.F > x.E; }) && !fr.every(function (x) { return x.F <= 1; }) && !fr.every(function (x) { return x.F === 100; });
+        if (asCount) b.rows.forEach(function (x) { if (x.F != null && x.E) x.F = x.F / x.E * 100; });
+      }
     });
     blocks = blocks.filter(function (b) { return b.rows.length; });
     return { blocks: blocks, hasFormulas: grid.hasFormulas, sheetName: opt.sheetName, source: opt.source, detected: heads.map(function (h) { return h.col; }) };
@@ -188,7 +243,7 @@ var Engine = (function () {
         var u = map[key];
         var src = b.totals.filter(function (t) { return t.phase === u.phase && u.grades.some(function (g) { return t.members.indexOf(g.r) >= 0; }); })[0] || null;
         if (u.grades.length >= 2 || src) {
-          var t = { id: b.id + ':T:' + u.group + ':' + u.phase, kind: 'total', blockId: b.id, r: src ? src.r : null, block: b.title, group: u.group, phase: u.phase, grade: 'Total', label: 'Phase ' + u.phase + ' total', E: 0, A: 0, G: 0, H: 0, src: src };
+          var t = { id: b.id + ':T:' + u.group + ':' + u.phase, kind: 'total', blockId: b.id, r: src ? src.r : null, block: b.title, group: u.group, phase: u.phase, grade: 'Total', label: phaseLabel(u.phase) + ' total', E: 0, A: 0, G: 0, H: 0, src: src };
           u.grades.forEach(function (g) { t.E += g.E || 0; t.A += g.A || 0; t.G += g.G || 0; t.H += g.H || 0; });
           t.I = t.A > 0 ? t.G / t.A : null; t.J = t.A > 0 ? t.H / t.A : null;
           t.judgCounts = judge(t.A, t.G, t.H, c);
@@ -231,7 +286,7 @@ var Engine = (function () {
 
   /* ---------- corrections ---------- */
   function findFixes(parsed, c) {
-    var fixes = [], okRows = 0, totalRows = 0;
+    var fixes = [], okRows = 0, totalRows = 0, built = build(parsed, c);
     parsed.blocks.forEach(function (b) {
       var tag = parsed.blocks.length > 1 ? b.title + ': ' : '';
       var mis = b.rows.filter(function (x) { return x.label != null && x.phase != null && x.label !== x.phase && b.totals.length; });
@@ -241,13 +296,18 @@ var Engine = (function () {
         if (!mem.length) return;
         var sE = 0, sG = 0, sH = 0, sA = 0, k = mem.length;
         mem.forEach(function (x) { var A1 = assessedOf(x, c), f1 = function (v) { return v > 1 ? v / 100 : v; }; sE += x.E || 0; sG += x.G != null ? x.G : Math.round(f1(x.I || 0) * A1); sH += x.H != null ? x.H : Math.round(f1(x.J || 0) * A1); sA += A1; });
-        var name = tag + 'Phase ' + t.phase + ' total', parts = [], cells = [];
+        var name = tag + phaseLabel(t.phase) + ' total', parts = [], cells = [];
         if (t.E != null && Math.abs(t.E - sE) > 1e-6) { parts.push('student count ' + fmt(t.E) + ' should be ' + sE); cells.push(['E', t.E, sE]); }
         if (t.G != null && Math.abs(t.G - sG) > 1e-6) { parts.push('expected or better ' + fmt(t.G) + (Math.abs(t.G - sG / k) < 0.01 ? ' (an average)' : '') + ' should be ' + sG); cells.push(['G', t.G, sG]); }
         if (t.H != null && Math.abs(t.H - sH) > 1e-6) { parts.push('better than expected ' + fmt(t.H) + (Math.abs(t.H - sH / k) < 0.01 ? ' (an average)' : '') + ' should be ' + sH); cells.push(['H', t.H, sH]); }
-        if (t.I != null && sA && Math.abs(t.I - sG / sA) > 5e-5) { parts.push('% expected or better ' + pct(t.I, 2) + ' should be ' + pct(sG / sA, 2)); cells.push(['I', t.I, sG / sA]); }
-        if (t.J != null && sA && Math.abs(t.J - sH / sA) > 5e-5) { parts.push('% better than expected ' + pct(t.J, 2) + ' should be ' + pct(sH / sA, 2)); cells.push(['J', t.J, sH / sA]); }
-        if (parts.length) fixes.push({ kind: 'total', what: name + ' added up wrong', detail: parts.join('; ') + '.', effect: '', r: t.r, cells: cells });
+        var f1 = function (v) { return v == null ? null : (v > 1 ? v / 100 : v); };
+        var avgOf = function (k) { var v = mem.map(function (x) { return f1(x[k]); }).filter(function (v) { return v != null; }); return v.length ? v.reduce(function (a, b) { return a + b; }, 0) / v.length : null; };
+        var tI = f1(t.I), tJ = f1(t.J), mI = avgOf('I'), mJ = avgOf('J');
+        if (tI != null && sA && Math.abs(tI - sG / sA) > 5e-5) { parts.push('% expected or better ' + pct(tI, 2) + (mI != null && Math.abs(tI - mI) < 5e-4 ? ' (a simple average of the grades)' : '') + ' should be ' + pct(sG / sA, 2)); cells.push(['I', t.I, sG / sA]); }
+        if (tJ != null && sA && Math.abs(tJ - sH / sA) > 5e-5) { parts.push('% better than expected ' + pct(tJ, 2) + (mJ != null && Math.abs(tJ - mJ) < 5e-4 ? ' (a simple average of the grades)' : '') + ' should be ' + pct(sH / sA, 2)); cells.push(['J', t.J, sH / sA]); }
+        var ct = built.items.filter(function (it) { return it.kind === 'total' && it.blockId === b.id && it.r === t.r; })[0];
+        var eff = !ct ? '' : !t.K ? 'Judgement ' + ct.judg : t.K === ct.judg ? 'None (stays ' + ct.judg + ')' : 'Changes from ' + t.K + ' to ' + ct.judg;
+        if (parts.length) fixes.push({ kind: 'total', what: name + ' added up wrong', detail: parts.join('; ') + '.', effect: eff, r: t.r, cells: cells });
       });
       b.rows.forEach(function (x) {
         totalRows++;
@@ -415,6 +475,6 @@ var Engine = (function () {
 
   return { CATS: CATS, ROLES: ROLES, ROLE_LABEL: ROLE_LABEL, defaults: defaults, needAt: needAt, judge: judge, roundBy: roundBy, catFromPoints: catFromPoints,
     gridFromAoa: gridFromAoa, parse: parse, headerOptions: headerOptions, colLetter: colLetter, assessedOf: assessedOf,
-    build: build, counted: counted, ruleLabel: ruleLabel, dist: dist, check: check, findFixes: findFixes, simulate: simulate, isWeakish: isWeakish, pct: pct, fmt: fmt };
+    build: build, counted: counted, ruleLabel: ruleLabel, phaseLabel: phaseLabel, dist: dist, check: check, findFixes: findFixes, simulate: simulate, isWeakish: isWeakish, pct: pct, fmt: fmt };
 })();
 if (typeof module !== 'undefined') module.exports = Engine;

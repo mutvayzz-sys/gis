@@ -541,6 +541,12 @@ body.asst-open .asst-fab { display: none; }
           <label class="row small"><input type="checkbox" id="vw-weak"> Count Very Weak with Weak for the limit</label>
           <label class="field"><span>Call a change “substantial” above</span><span class="pctin"><input type="number" id="subst" min="0" max="100" step="1" inputmode="decimal"><span>percentage points</span></span></label>
           <label class="field"><span>Title of the simulated sheet</span><input type="text" id="sim-title" spellcheck="false"></label>
+          <div class="field"><span>Decimal places in percentages, on the page and in the workbook</span>
+            <div class="seg" role="radiogroup" aria-label="Decimal places in percentages" id="pctdp">
+              <label><input type="radio" name="pctdp" value="0">None (75%)</label>
+              <label><input type="radio" name="pctdp" value="1">One (75.0%)</label>
+              <label><input type="radio" name="pctdp" value="2">Two (75.00%)</label>
+            </div></div>
         </div>
       </details>
     </div>

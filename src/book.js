@@ -6,6 +6,9 @@ var Book = (function (E) {
   function fill(a) { return { type: 'pattern', pattern: 'solid', fgColor: { argb: a } }; }
   function font(o) { o = o || {}; var f = { name: 'Calibri', size: o.size || 12, bold: !!o.bold, italic: !!o.italic }; if (o.color) f.color = { argb: o.color }; return f; }
   var L = E.colLetter;
+  // Number format for percentages in the workbook: set from the rules (0, 1 or 2 decimal places) at each build.
+  var PCT = '0.0%', PDP = 1;
+  function pctFmt(dp) { dp = dp === 0 || dp === 2 ? dp : 1; return dp ? '0.' + '00'.slice(0, dp) + '%' : '0%'; }
   var NAMES = {
     orig: 'Original (as received)', actual: 'Actual results (corrected)', comp: 'Comparison', counts: 'Judgement counts',
     totals: 'Total judgements', log: 'Corrections log', plan: 'Planning assumptions', settings: 'Settings',
@@ -53,7 +56,8 @@ var Book = (function (E) {
       ['Which judgements count toward the limits', { both: 'Grades and phase totals', grades: 'Grades only', phases: 'Phase totals only' }[cfg.basis]],
       ['Count Very Weak with Weak for the limit', cfg.vwCountsAsWeak ? 'Yes' : 'No'],
       ['Use the % assessed column', cfg.useAssessed ? 'Yes' : 'No'],
-      ['Flag an adjustment as substantial above (percentage points)', cfg.substantialPts]
+      ['Flag an adjustment as substantial above (percentage points)', cfg.substantialPts],
+      ['Decimal places shown in percentages', PDP]
     ];
     (cfg.extraRules || []).forEach(function (r, i) { rows.push(['Extra rule ' + (i + 1), r.label || E.ruleLabel(r)]); });
     rows.forEach(function (r, i) {
@@ -125,8 +129,8 @@ var Book = (function (E) {
       function markChanged(x, kind, was, col) {
         var f0 = x.font || {}; x.fill = fill(C.chg); x.font = { name: f0.name || 'Calibri', size: f0.size || 11, bold: true, color: { argb: C.chgInk } };
         x.alignment = Object.assign({}, x.alignment || {}, { wrapText: false, shrinkToFit: false });
-        var w = kind === 'p' ? (was == null ? '' : (Math.round(was * 1000) / 10).toFixed(1) + '%') : String(was == null ? '' : (typeof was === 'number' ? E.fmt(was) : was)).replace(/"/g, '');
-        x.numFmt = kind === 'p' ? '0.0%" (was ' + w + ')"' : kind === 'j' ? 'General;General;General;@" (was ' + w + ')"' : '0" (was ' + w + ')"';
+        var w = kind === 'p' ? (was == null ? '' : (was * 100).toFixed(PDP) + '%') : String(was == null ? '' : (typeof was === 'number' ? E.fmt(was) : was)).replace(/"/g, '');
+        x.numFmt = kind === 'p' ? PCT + '" (was ' + w + ')"' : kind === 'j' ? 'General;General;General;@" (was ' + w + ')"' : '0" (was ' + w + ')"';
         var shown = kind === 'p' ? 6 + w.length + 7 : kind === 'j' ? String(x.value && x.value.result != null ? x.value.result : '').length + w.length + 7 : 4 + w.length + 7;
         var need = Math.ceil(shown * ((f0.size || 11) / 11) * 1.12) + 2;
         if (col && (ws.getColumn(col).width || 9) < need) ws.getColumn(col).width = need;
@@ -158,8 +162,8 @@ var Book = (function (E) {
         });
         var aF = (cfg.useAssessed && c.F != null) ? 'ROUND(' + cellRef(c.E, r) + '*IF(' + cellRef(c.F, r) + '>1,' + cellRef(c.F, r) + '/100,' + cellRef(c.F, r) + '),0)' : cellRef(c.E, r);
         styleHelper(setF(hA, r, aF, it.A, '0'), false);
-        if (c.I != null && !(dG && mode === 'actual')) { var xi = setF(c.I, r, 'IF(' + aRef + '>0,' + gRef + '/' + aRef + ',0)', it.I || 0, '0.0%'); if (mode === 'sim' && bi && it.G !== bi.G) markChanged(xi, 'p', bi.I, c.I); }
-        if (c.J != null && !(dH && mode === 'actual')) { var xj = setF(c.J, r, 'IF(' + aRef + '>0,' + hRef + '/' + aRef + ',0)', it.J || 0, '0.0%'); if (mode === 'sim' && bi && it.H !== bi.H) markChanged(xj, 'p', bi.J, c.J); }
+        if (c.I != null && !(dG && mode === 'actual')) { var xi = setF(c.I, r, 'IF(' + aRef + '>0,' + gRef + '/' + aRef + ',0)', it.I || 0, PCT); if (mode === 'sim' && bi && it.G !== bi.G) markChanged(xi, 'p', bi.I, c.I); }
+        if (c.J != null && !(dH && mode === 'actual')) { var xj = setF(c.J, r, 'IF(' + aRef + '>0,' + hRef + '/' + aRef + ',0)', it.J || 0, PCT); if (mode === 'sim' && bi && it.H !== bi.H) markChanged(xj, 'p', bi.J, c.J); }
         var xk = setF(hK, r, judgeF(aRef, gRef, hRef), it.judg);
         if (!c.K) styleHelper(xk, false);
         if (mode === 'sim' && bi && it.judg !== bi.judg) { markChanged(xk, 'j', bi.judg, hK); xk.note = 'SIMULATED. Actual judgement: ' + bi.judg + '.'; }
@@ -193,7 +197,7 @@ var Book = (function (E) {
         ['I', 'J'].forEach(function (k) {
           if (c[k] == null) return;
           var cnt = k === 'I' ? hG : hH, v = k === 'I' ? it.I : it.J;
-          var x = setF(c[k], r, 'IF(' + aRef + '>0,' + L(cnt) + r + '/' + aRef + ',0)', v || 0, '0.0%');
+          var x = setF(c[k], r, 'IF(' + aRef + '>0,' + L(cnt) + r + '/' + aRef + ',0)', v || 0, PCT);
           if (mode === 'actual' && !(k === 'I' ? dG : dH) && t0[k] != null && Math.abs(t0[k] - (v || 0)) > 5e-5) { x.fill = fill(C.orange); x.note = 'Corrected. The file said ' + E.pct(t0[k], 2) + ' (a simple average, not total divided by total).'; }
           if (mode === 'sim' && bi && Math.abs((v || 0) - ((k === 'I' ? bi.I : bi.J) || 0)) > 1e-9) markChanged(x, 'p', k === 'I' ? bi.I : bi.J, c[k]);
         });
@@ -281,8 +285,8 @@ var Book = (function (E) {
       put(r, 3, { formula: act + L(ha[k]) + rr, result: x.from[k] }, '0');
       var sv = put(r, 4, { formula: L(hb[k]) + rr, result: x.to[k] }, '0'); sv.fill = fill(C.chg); sv.font = font({ bold: true, color: C.chgInk });
       var ch = put(r, 5, { formula: CL(4) + r + '-' + CL(3) + r, result: x.to[k] - x.from[k] }, '+0;-0;0'); ch.font = font({ bold: true, color: C.chgInk, size: 13 });
-      put(r, 6, { formula: 'IF(' + L(hb.A) + rr + '>0,' + CL(3) + r + '/' + L(hb.A) + rr + ',0)', result: x.from[kk] || 0 }, '0.0%');
-      var sp = put(r, 7, { formula: 'IF(' + L(hb.A) + rr + '>0,' + CL(4) + r + '/' + L(hb.A) + rr + ',0)', result: x.to[kk] || 0 }, '0.0%'); sp.fill = fill(C.chg); sp.font = font({ bold: true, color: C.chgInk });
+      put(r, 6, { formula: 'IF(' + L(hb.A) + rr + '>0,' + CL(3) + r + '/' + L(hb.A) + rr + ',0)', result: x.from[kk] || 0 }, PCT);
+      var sp = put(r, 7, { formula: 'IF(' + L(hb.A) + rr + '>0,' + CL(4) + r + '/' + L(hb.A) + rr + ',0)', result: x.to[kk] || 0 }, PCT); sp.fill = fill(C.chg); sp.font = font({ bold: true, color: C.chgInk });
       put(r, 8, { formula: '(' + CL(7) + r + '-' + CL(6) + r + ')*100', result: ((x.to[kk] || 0) - (x.from[kk] || 0)) * 100 }, '+0.0;-0.0;0.0');
       var same = x.from.judg === x.to.judg;
       put(r, 9, { formula: act + L(ha.K) + rr, result: x.from.judg });
@@ -357,6 +361,7 @@ var Book = (function (E) {
 
   /* ---------- the whole workbook ---------- */
   function build(ctx) {
+    PDP = ctx.cfg && (ctx.cfg.pctDecimals === 0 || ctx.cfg.pctDecimals === 2) ? ctx.cfg.pctDecimals : 1; PCT = pctFmt(PDP);
     // ctx: {srcWb, sheetName, parsed, cfg, base, sim, sel}
     var cfg = ctx.cfg, wb = new ExcelJS.Workbook(); wb.creator = 'Progress Judgements'; wb.created = new Date();
     wb.calcProperties = { fullCalcOnLoad: true };
@@ -458,7 +463,7 @@ var Book = (function (E) {
       fills: function (i, j, row) { return simCols.indexOf(i) >= 0 ? C.blue : (row[4] === 'Phase total' ? C.pale : C.cream); },
       bold: function (i, j, row) { return row[4] === 'Phase total' || i === 9 || i === 12 || i === 19; },
       colors: function (i, j, row) { return simCols.indexOf(i) >= 0 ? C.ink : null; },
-      fmt: [null, null, null, null, null, '0', '0', '0', '0', '+0;-0;0', '0', '0', '+0;-0;0', '0.0%', '0.0%', '0.0%', '0.0%'],
+      fmt: [null, null, null, null, null, '0', '0', '0', '0', '+0;-0;0', '0', '0', '+0;-0;0', PCT, PCT, PCT, PCT],
       headHeight: 46, widths: [14, 14, 8, 10, 11, 9, 9, 11, 11, 10, 11, 11, 10, 11, 11, 11, 11, 13, 13, 11]
     });
     ws.views = [{ state: 'frozen', ySplit: r0, xSplit: 5 }];
@@ -530,7 +535,7 @@ var Book = (function (E) {
     });
     var shareRows = [tr + 1, tr + 3], metRows = [tr + 2, tr + 4];
     xr.forEach(function (_, ri) { shareRows.push(tr + 5 + ri * 2); metRows.push(tr + 6 + ri * 2); });
-    shareRows.forEach(function (r) { for (var i = 0; i < 6; i++) ws.getCell(r, 3 + i).numFmt = '0.0%'; });
+    shareRows.forEach(function (r) { for (var i = 0; i < 6; i++) ws.getCell(r, 3 + i).numFmt = PCT; });
     metRows.forEach(function (r) { for (var i = 0; i < 6; i++) { var x = ws.getCell(r, 3 + i); x.font = font({ bold: true, color: x.value.result === 'Yes' ? 'FF375623' : 'FFC00000' }); } });
     var note = ws.getCell(tr + 7 + xr.length * 2, 2);
     note.value = 'The targets are checked on: ' + { both: 'all judgements (grades and phase totals)', grades: 'grade judgements only', phases: 'phase total judgements only' }[cfg.basis] + '. With few judgements, a 20% limit allows very few Weak results (for example, 0 of 3).';
@@ -561,7 +566,7 @@ var Book = (function (E) {
       headFills: heads.map(function (_, i) { return i >= 9 && i <= 12 ? C.blue : C.yel; }),
       fills: function (i) { return i >= 9 && i <= 12 ? C.blue : (i === 18 ? 'FFFFF2CC' : C.cream); },
       bold: function (i) { return i === 8 || i === 12; }, colors: function (i) { return i >= 9 && i <= 12 ? C.ink : null; },
-      left: { 3: true, 18: true }, fmt: [null, null, null, null, '0', '0', '0.00', '0', null, '0', '0.00', '0', null, '0', '0', '0.0%', '0', '0.0%'],
+      left: { 3: true, 18: true }, fmt: [null, null, null, null, '0', '0', '0.00', '0', null, '0', '0.00', '0', null, '0', '0', PCT, '0', PCT],
       widths: [14, 14, 8, 40, 9, 9, 10, 9, 14, 10, 10, 9, 14, 10, 11, 11, 11, 11, 40], headHeight: 46
     });
     ws.getCell(r0 + rows.length + 2, 2).value = 'Points: ' + E.CATS.slice().reverse().filter(function (k) { return cfg.points[k] != null && cfg.points[k] !== ''; }).map(function (k) { return k + ' = ' + cfg.points[k]; }).join(', ') + '. Rounding rule: ' + ruleText(cfg.rounding) + '.';

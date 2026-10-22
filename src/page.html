@@ -387,6 +387,16 @@ body.asst-open .asst-fab { display: none; }
 .rows-tbl td.x { width: 40px; }
 .rows-tbl .rm { appearance: none; border: 0; background: transparent; color: var(--fg-3); width: 34px; height: 34px; border-radius: 8px; cursor: pointer; display: grid; place-items: center; transition: background-color 150ms ease, color 150ms ease; }
 .rows-tbl .rm:hover { background: var(--muted); color: var(--bad); } .rows-tbl .rm svg { width: 16px; height: 16px; }
+#match-card { grid-template-columns: minmax(0, 1fr); }
+.match-file { display: grid; gap: var(--s3); align-content: start; min-width: 0; }
+.match-file .row { align-items: center; }
+.mf-name { overflow-wrap: anywhere; }
+.mf-cols { display: grid; gap: var(--s3); }
+.mf-cols .field { grid-template-columns: minmax(0, 1fr); min-width: 0; }
+.mf-cols select { width: 100%; min-width: 0; max-width: 100%; }
+#mf-out { margin-top: var(--s4); }
+#mf-out .edit td, #mf-out .edit th { text-align: right; }
+#mf-out .edit td:first-child, #mf-out .edit th:first-child { text-align: left; }
 .rows-top { display: flex; flex-wrap: wrap; gap: var(--s3); align-items: end; justify-content: space-between; margin-bottom: var(--s3); }
 .rows-top .field { min-width: 200px; flex: 1 1 220px; max-width: 360px; }
 @media (max-width: 560px) { .rows-tbl th { white-space: normal; vertical-align: bottom; line-height: 1.2; } .rows-tbl input { min-width: 52px; padding: 0 6px; } .rows-tbl td.x { width: 34px; } }
@@ -437,6 +447,7 @@ body.asst-open .asst-fab { display: none; }
       <div class="row" style="justify-content:center">
         <label class="btn primary big" for="file-in">Choose a File<input class="vh" id="file-in" type="file" accept=".xlsx,.xlsm,.xls,.xlsb,.ods,.fods,.csv,.tsv,.txt,.numbers"></label>
         <button class="btn big" type="button" id="open-rows" aria-controls="rows-card" aria-expanded="false">Enter Rows</button>
+        <button class="btn big" type="button" id="open-match" aria-controls="match-card" aria-expanded="false">Match Two Student Files</button>
       </div>
       <div class="gs-row"><label for="gs-link" class="muted small">Google Sheets link</label><input type="url" id="gs-link" inputmode="url" autocomplete="off" spellcheck="false" placeholder="https://docs.google.com/spreadsheets/d/…"><button class="btn" type="button" id="gs-go">Open</button></div>
       <p class="muted small">Need the layout? <button class="btn quiet" type="button" data-dl="template" style="min-height:30px;padding:0 8px">Download the blank template</button></p>
@@ -452,6 +463,35 @@ body.asst-open .asst-fab { display: none; }
       <div class="tbl-scroll"><table class="rows-tbl" id="rows-tbl"></table></div>
       <div class="row" style="margin-top:var(--s3)"><button class="btn" type="button" id="rows-add">Add Row</button><button class="btn quiet" type="button" id="rows-clear">Clear</button><span style="flex:1"></span><button class="btn primary" type="button" id="rows-use">Use These Rows</button></div>
     </div>
+    </div>
+    <div class="card soft" id="match-card" hidden>
+      <h3>Match two student-level test files</h3>
+      <p class="muted small">For files with one row per student, such as an earlier and a later test. The page matches students by ID and counts, for each grade, how many made expected or better progress and how many did better than expected. The files are read here in your browser. Only the counts per grade are used by the page; the student rows are not kept and are not sent to the assistant.</p>
+      <div class="grid2 match-files">
+        <div class="match-file" id="mf-1">
+          <div class="row"><label class="btn" for="mf-in-1">Earlier Test File<input class="vh" id="mf-in-1" type="file" accept=".xlsx,.xlsm,.xls,.xlsb,.ods,.csv,.tsv,.txt"></label><span class="muted small mf-name" id="mf-name-1">No file yet</span></div>
+          <div class="mf-cols" id="mf-cols-1"></div>
+        </div>
+        <div class="match-file" id="mf-2">
+          <div class="row"><label class="btn" for="mf-in-2">Later Test File<input class="vh" id="mf-in-2" type="file" accept=".xlsx,.xlsm,.xls,.xlsb,.ods,.csv,.tsv,.txt"></label><span class="muted small mf-name" id="mf-name-2">No file yet</span></div>
+          <div class="mf-cols" id="mf-cols-2"></div>
+        </div>
+      </div>
+      <div class="field" style="margin-top:var(--s4)"><span>How progress is decided</span>
+        <div class="seg" role="radiogroup" aria-label="How progress is decided" id="mf-rule">
+          <label><input type="radio" name="mf-rule" value="level" checked>By level</label>
+          <label><input type="radio" name="mf-rule" value="band">By score, with a margin</label>
+        </div>
+        <p class="muted small" id="mf-rule-eg"></p>
+      </div>
+      <div class="grid2" style="margin-top:var(--s3)">
+        <label class="field" id="mf-band-f" hidden><span>Margin (score points, for example the test's measurement error)</span><input type="number" id="mf-band" min="0" step="any" inputmode="decimal" placeholder="3"></label>
+        <label class="field"><span>Levels in order, lowest first (only if the levels are words)</span><input type="text" id="mf-levels" placeholder="For example: Below, Working towards, Expected, Greater depth" autocomplete="off" spellcheck="false"></label>
+        <label class="row small"><input type="checkbox" id="mf-pct"> The scores are percentile ranks: turn them into stanines (1 to 9) first</label>
+        <label class="field"><span>Subject or table name</span><input type="text" id="mf-title" placeholder="For example: Science" autocomplete="off"></label>
+      </div>
+      <div id="mf-out" aria-live="polite"></div>
+      <div class="row" style="margin-top:var(--s3)"><button class="btn quiet" type="button" id="mf-clear">Clear</button><span style="flex:1"></span><button class="btn primary" type="button" id="mf-use" disabled>Use These Counts</button></div>
     </div>
     <p class="msg" id="msg1" aria-live="polite"></p>
     <div class="card soft">

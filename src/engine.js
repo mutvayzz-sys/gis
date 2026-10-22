@@ -499,7 +499,83 @@ var Engine = (function () {
     }
   }
 
-  return { CATS: CATS, ROLES: ROLES, ROLE_LABEL: ROLE_LABEL, defaults: defaults, needAt: needAt, judge: judge, roundBy: roundBy, catFromPoints: catFromPoints,
+  /* ---------- two student-level files ---------- */
+  // A student-level file has one row per student: an ID, a grade and a score or level.
+  // These run in the browser only; the student rows never leave it and only per-grade counts come out.
+  var STU = {
+    id: /^(?:student|pupil|learner)?\s*(?:id|no\.?|number|code|ref(?:erence)?)$|student\s*(?:id|number|no\.?|code)|pupil\s*(?:id|number|no\.?)|learner\s*(?:id|number)|^upn$|admission\s*(?:no|number)|esis|^sis\s*id|^id\b/,
+    grade: /^(?:grade|year|yr|class|grade level|year group|form)$|^(?:current\s+)?(?:grade|year)(?:\s+(?:level|group))?$|\bgrade\b|\byear group\b/,
+    score: /stanine|percentile|\bscore\b|scale|\blevel\b|band|\bmark\b|result|\bsas\b|rit|attainment|\bnpr\b/
+  };
+  function studentColumns(aoa) {
+    var best = null;
+    for (var r = 0; r < Math.min(aoa.length, 12); r++) {
+      var row = aoa[r] || [], found = { headerRow: r, id: null, grade: null, score: null, heads: [] };
+      row.forEach(function (v, c) {
+        var s = text(v).toLowerCase().replace(/\s+/g, ' '); found.heads[c] = text(v);
+        if (!s || s.length > 60) return;
+        if (found.id == null && STU.id.test(s)) found.id = c;
+        else if (found.grade == null && STU.grade.test(s) && !STU.score.test(s.replace(/grade level/, ''))) found.grade = c;
+        else if (STU.score.test(s)) { if (found.score == null || /stanine|percentile|level/.test(s) && !/stanine|percentile|level/.test(text(row[found.score]).toLowerCase())) found.score = c; }
+      });
+      if (found.id != null && (!best || (found.score != null) > (best.score != null))) best = found;
+      if (best && best.score != null) break;
+    }
+    return best;
+  }
+  // Standard stanine bands for national percentile ranks: 1-4, 5-11, 12-23, 24-40, 41-60, 61-77, 78-89, 90-96, 97-99.
+  var STANINE_CUTS = [4, 11, 23, 40, 60, 77, 89, 96];
+  function stanine(p) { var s = 1; STANINE_CUTS.forEach(function (c) { if (p > c) s++; }); return s; }
+  function gradeKey(v) { var g = text(v); if (!g) return null; return /^\d+$/.test(g) ? 'Grade ' + g : g; }
+  function natCmp(a, b) { var na = parseFloat(String(a).replace(/^\D+/, '')), nb = parseFloat(String(b).replace(/^\D+/, '')); if (!isNaN(na) && !isNaN(nb) && na !== nb) return na - nb; return String(a).localeCompare(String(b)); }
+  // f: {rows: aoa, headerRow, id, grade, score}. opt: {expectBand, betterBand, percentiles, levels: [lowest..highest]}
+  // Expected or better: later >= earlier - expectBand. Better than expected: later > earlier + betterBand.
+  function matchStudents(f1, f2, opt) {
+    opt = opt || {};
+    var m = Math.max(0, +opt.expectBand || 0), n = Math.max(0, +opt.betterBand || 0);
+    var order = (opt.levels || []).map(function (x) { return text(x).toLowerCase(); }).filter(Boolean);
+    function val(v) {
+      if (v == null || v === '') return null;
+      var t = text(v).toLowerCase();
+      if (order.length) { var k = order.indexOf(t); if (k >= 0) return k + 1; }
+      var x = typeof v === 'number' ? v : parseFloat(t.replace(/[^0-9.\-]/g, ''));
+      if (!isFinite(x)) return null;
+      return opt.percentiles ? stanine(x) : x;
+    }
+    function read(f) {
+      var map = {}, dup = 0, bad = 0, blank = 0;
+      (f.rows || []).slice(f.headerRow + 1).forEach(function (row) {
+        row = row || [];
+        var id = text(row[f.id]);
+        if (!id) { if (row.some(function (v) { return v != null && v !== ''; })) blank++; return; }
+        id = id.toLowerCase();
+        if (map[id]) { dup++; return; }
+        var s = val(row[f.score]);
+        if (s == null) { bad++; return; }
+        map[id] = { s: s, g: f.grade != null ? gradeKey(row[f.grade]) : null };
+      });
+      return { map: map, dup: dup, bad: bad, blank: blank };
+    }
+    var a = read(f1), b = read(f2), per = {}, matched = 0, onlyA = 0, onlyB = 0, noGrade = 0;
+    Object.keys(b.map).forEach(function (id) {
+      var y = b.map[id], x = a.map[id];
+      if (!x) { onlyB++; return; }
+      var g = y.g || x.g;
+      if (!g) { noGrade++; return; }
+      var p = per[g] = per[g] || { grade: g, E: 0, G: 0, H: 0 };
+      p.E++; matched++;
+      var d = y.s - x.s;
+      if (d >= -m - 1e-9) p.G++;
+      if (d > n + 1e-9) p.H++;
+    });
+    Object.keys(a.map).forEach(function (id) { if (!b.map[id]) onlyA++; });
+    var grades = Object.keys(per).sort(natCmp).map(function (k) { return per[k]; });
+    return { grades: grades, matched: matched, onlyEarlier: onlyA, onlyLater: onlyB, noGrade: noGrade,
+      duplicates: a.dup + b.dup, unreadable: a.bad + b.bad, noId: a.blank + b.blank };
+  }
+
+  return { studentColumns: studentColumns, matchStudents: matchStudents, stanine: stanine,
+    CATS: CATS, ROLES: ROLES, ROLE_LABEL: ROLE_LABEL, defaults: defaults, needAt: needAt, judge: judge, roundBy: roundBy, catFromPoints: catFromPoints,
     gridFromAoa: gridFromAoa, parse: parse, headerOptions: headerOptions, colLetter: colLetter, assessedOf: assessedOf,
     build: build, counted: counted, ruleLabel: ruleLabel, phaseLabel: phaseLabel, dist: dist, check: check, findFixes: findFixes, simulate: simulate, isWeakish: isWeakish, pct: pct, fmt: fmt };
 })();

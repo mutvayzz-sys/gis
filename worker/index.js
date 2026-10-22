@@ -7,7 +7,7 @@
 import PROMPT from '../src/prompt.txt';
 import puppeteer from '@cloudflare/puppeteer';
 
-const TOOLS = new Set(['get_overview', 'read_cells', 'choose_sheet', 'set_header_row', 'set_column', 'set_rules', 'edit_number', 'set_cell', 'choose_option', 'go_to_step', 'set_cells', 'enter_rows', 'set_phase', 'add_rule', 'remove_rule', 'set_simulation_limits', 'set_simulated_numbers', 'report_gap', 'undo_last_change', 'offer_downloads', 'use_all_sheets', 'scan_sheet']);
+const TOOLS = new Set(['get_overview', 'read_cells', 'choose_sheet', 'set_header_row', 'set_column', 'set_rules', 'edit_number', 'set_cell', 'choose_option', 'go_to_step', 'set_cells', 'enter_rows', 'set_phase', 'add_rule', 'remove_rule', 'set_simulation_limits', 'set_simulated_numbers', 'report_gap', 'undo_last_change', 'offer_downloads', 'use_all_sheets', 'scan_sheet', 'open_student_matching']);
 const MAX_BODY = 14 * 1024 * 1024; // room for a few attached pictures and the spreadsheet itself
 const API = 'https://api.anthropic.com/v1';
 const SHEET_TYPES = /\.(xlsx|xlsm|xls|csv)$/i;

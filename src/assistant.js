@@ -20,6 +20,7 @@
   function overview() {
     var o = { loaded: !!st.grid, file: st.srcName || null, step: st.step };
     if (!st.src) { o.hint = 'Nothing is loaded yet. The person can choose a file or enter rows. If they give you numbers, type them in with enter_rows.'; return o; }
+    if (st.fromStudents) o.countsFromStudentFiles = st.fromStudents; // totals only: how many matched and left out, and the rule
     o.sheets = st.src.worksheets.map(function (w) { return w.name; }); o.sheet = st.sheetName; o.headerRowOverride = st.headerRow || null;
     o.sheetSize = st.grid ? { rows: st.grid.maxR, cols: E.colLetter(st.grid.maxC) } : null;
     if (st.parsed) o.tables = st.parsed.blocks.map(function (b) {
@@ -240,7 +241,10 @@
       inputSchema: { type: 'object', properties: { items: { type: 'array', items: { type: 'string', enum: ['workbook', 'report', 'chat'] } } }, required: ['items'] },
       execute: function (i) { var it = (i.items || []).filter(function (x) { return ['workbook', 'report', 'chat'].indexOf(x) >= 0; }); if (!it.length) throw new Error('Nothing to offer'); if (!st.base && it.some(function (x) { return x !== 'chat'; })) throw new Error('Nothing is loaded yet, so there are no results to download.'); AS.offer = it; return 'Buttons will appear under your reply: ' + it.join(', ') + '.'; } },
     { name: 'go_to_step', description: 'Shows a step of the page so the person can see the result: 1 Load, 2 Check, 3 Rules (including extra rules), 4 Results, 5 Simulation (including its limits), 6 Download.', inputSchema: { type: 'object', properties: { step: { type: 'integer' } }, required: ['step'] },
-      execute: function (i) { go(+i.step); if (+i.step === 5) { var d = $('simlim'); if (d && (st.cfg.simMaxStudents != null || st.cfg.simMaxPts != null || (st.cfg.simLocked || []).length || Object.keys(st.cfg.simPinned || {}).length)) d.open = true; } return 'Showing step ' + st.step; } }
+      execute: function (i) { go(+i.step); if (+i.step === 5) { var d = $('simlim'); if (d && (st.cfg.simMaxStudents != null || st.cfg.simMaxPts != null || (st.cfg.simLocked || []).length || Object.keys(st.cfg.simPinned || {}).length)) d.open = true; } return 'Showing step ' + st.step; } },
+    { name: 'open_student_matching', description: 'Opens "Match Two Student Files" on step 1, for student-level files (one row per student) from an earlier and a later test. The person chooses the two files there; the page matches students by ID in their browser, applies the chosen progress rule (same level or higher, or a score margin, optionally percentiles turned into stanines) and loads only the per-grade counts. You never see the student rows. Use it when someone has two student-level files.',
+      inputSchema: { type: 'object', properties: {} },
+      execute: function () { if (typeof window.openStudentMatching !== 'function') throw new Error('Not available'); window.openStudentMatching(); return 'Opened Match Two Student Files on step 1. The person picks the earlier and later files there.'; } }
   ];
 
   /* ---------- transports ---------- */

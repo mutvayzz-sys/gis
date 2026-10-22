@@ -36,7 +36,7 @@
   }
   function msg(id, t, k) { var m = $(id); if (!m) return; m.textContent = t || ''; m.className = 'msg' + (k ? ' ' + k : ''); }
   function useWorkbook(wb, name, orig) {
-    st.rawFile = st.pendingRaw || null; st.pendingRaw = null;
+    st.rawFile = st.pendingRaw || null; st.pendingRaw = null; st.fromStudents = null;
     st.src = wb; st.origWb = orig || null; st.headerRow = null; st.srcName = name; st.edits = {}; st.manual = null; st.sel = 0; st.wb = null; st.cfg.simLocked = []; st.cfg.simPinned = {};
     var withTables = wb.worksheets.filter(function (ws) { return E.parse(gridFromWs(ws), { sheetName: ws.name }).blocks.length; });
     if (!withTables.length) {
@@ -45,7 +45,10 @@
       $('sheet-pick').hidden = wb.worksheets.length < 2;
       $('sheet-list').innerHTML = wb.worksheets.map(function (ws) { return '<button type="button" class="btn' + (ws === first ? ' primary' : '') + '" data-sheet="' + esc(ws.name) + '">' + esc(ws.name) + '</button>'; }).join('');
       pickSheet(first.name);
-      msg('msg1', 'Loaded ' + name + ', but the table needs a little help to be read.', '');
+      var g1 = gridFromWs(first), top = [];
+      for (var tr = 1; tr <= Math.min(g1.maxR, 12); tr++) { top.push([]); for (var tc = 1; tc <= g1.maxC; tc++) top[tr - 1].push(g1.cells[tr + ',' + tc] == null ? null : g1.cells[tr + ',' + tc]); }
+      var stuCols = E.studentColumns(top);
+      msg('msg1', 'Loaded ' + name + ', but the table needs a little help to be read.' + (stuCols ? ' It looks like a student-level file (one row per student). To judge progress from two tests, use Match Two Student Files on the first step.' : ''), '');
       go(2); return;
     }
     st.tabsWithTables = withTables.map(function (ws) { return ws.name; });
@@ -231,6 +234,98 @@
   }
   $('rows-use').addEventListener('click', function () { useRows(); });
 
+  /* ---------- two student-level files (matched in the browser) ---------- */
+  // Student rows live only in this closure until counts are made, and are dropped straight after.
+  var MF = { files: [null, null], res: null };
+  function openMatch(open) {
+    var c = $('match-card'); c.hidden = !open; $('open-match').setAttribute('aria-expanded', open ? 'true' : 'false');
+    if (open) { renderMatch(); c.scrollIntoView({ block: 'start', behavior: matchMedia('(prefers-reduced-motion: reduce)').matches ? 'auto' : 'smooth' }); }
+  }
+  $('open-match').addEventListener('click', function () { openMatch($('match-card').hidden); });
+  function readStudentFile(f, i) {
+    if (!f) return;
+    var ext = (f.name.split('.').pop() || '').toLowerCase();
+    f.arrayBuffer().then(function (buf) {
+      if (typeof XLSX === 'undefined') throw new Error('reader');
+      var x = /^(csv|tsv|txt)$/.test(ext) ? XLSX.read(new TextDecoder().decode(new Uint8Array(buf)), { type: 'string' }) : XLSX.read(new Uint8Array(buf), { type: 'array' });
+      var pick = null;
+      x.SheetNames.forEach(function (n) { if (pick && pick.cols) return; var aoa = XLSX.utils.sheet_to_json(x.Sheets[n], { header: 1, raw: true, defval: null }); var cols = E.studentColumns(aoa); if (!pick || (cols && !pick.cols) || (!pick.aoa.length && aoa.length)) pick = { aoa: aoa, cols: cols, sheet: n }; });
+      if (!pick || !pick.aoa.length) throw new Error('empty');
+      var cols = pick.cols || { headerRow: 0, id: null, grade: null, score: null, heads: (pick.aoa[0] || []).map(function (v) { return v == null ? '' : String(v); }) };
+      MF.files[i] = { name: f.name, sheet: pick.sheet, rows: pick.aoa, headerRow: cols.headerRow, id: cols.id, grade: cols.grade, score: cols.score, heads: cols.heads };
+      renderMatch();
+    }).catch(function () { MF.files[i] = null; renderMatch(); $('mf-name-' + (i + 1)).textContent = 'That file could not be read. Save it as .xlsx or .csv and try again.'; });
+  }
+  [1, 2].forEach(function (n) { $('mf-in-' + n).addEventListener('change', function (e) { readStudentFile(e.target.files && e.target.files[0], n - 1); e.target.value = ''; }); });
+  function mfOpts() {
+    var band = parseFloat($('mf-band').value), byBand = document.querySelector('input[name="mf-rule"]:checked').value === 'band';
+    var levels = $('mf-levels').value.split(',').map(function (x) { return x.trim(); }).filter(Boolean);
+    return { byBand: byBand, expectBand: byBand && band > 0 ? band : 0, betterBand: byBand && band > 0 ? band : 0, percentiles: $('mf-pct').checked, levels: levels };
+  }
+  function ruleWords(o) {
+    var unit = o.percentiles ? 'stanine' : (o.byBand ? 'score' : 'level');
+    if (!o.byBand || !o.expectBand) return 'Expected or better: the later ' + unit + ' is the same or higher. Better than expected: the later ' + unit + ' is higher.';
+    return 'Expected or better: the later ' + unit + ' is no more than ' + o.expectBand + ' below the earlier one. Better than expected: it is more than ' + o.betterBand + ' above the earlier one.';
+  }
+  function renderMatch() {
+    var o = mfOpts();
+    $('mf-band-f').hidden = !o.byBand;
+    $('mf-rule-eg').textContent = ruleWords(o);
+    [0, 1].forEach(function (i) {
+      var f = MF.files[i], n = i + 1;
+      $('mf-name-' + n).textContent = f ? f.name + (f.sheet && !/\.(csv|tsv|txt)$/i.test(f.name) ? ', sheet ' + f.sheet : '') + ': ' + Math.max(0, f.rows.length - f.headerRow - 1) + ' rows' : 'No file yet';
+      if (!f) { $('mf-cols-' + n).innerHTML = ''; return; }
+      var opts = function (cur) { return '<option value="">Choose a column</option>' + f.heads.map(function (h, c) { return h ? '<option value="' + c + '"' + (c === cur ? ' selected' : '') + '>' + esc(E.colLetter(c + 1) + ': ' + String(h).slice(0, 50)) + '</option>' : ''; }).join(''); };
+      $('mf-cols-' + n).innerHTML = [['id', 'Student ID'], ['grade', 'Grade or year'], ['score', o.percentiles ? 'Percentile rank' : 'Score or level']].map(function (r) {
+        return '<label class="field"><span>' + r[1] + '</span><select data-mf="' + i + '" data-mk="' + r[0] + '">' + opts(f[r[0]]) + '</select></label>';
+      }).join('');
+    });
+    MF.res = null;
+    var a = MF.files[0], b = MF.files[1], out = '';
+    if (a && b) {
+      var miss = [];
+      [a, b].forEach(function (f, i) { ['id', 'score'].forEach(function (k) { if (f[k] == null) miss.push((i ? 'later' : 'earlier') + ' file: ' + (k === 'id' ? 'student ID' : 'score or level') + ' column'); }); });
+      if (a.grade == null && b.grade == null) miss.push('a grade column in either file');
+      if (miss.length) out = '<p class="msg bad">Choose the ' + esc(miss.join(', ')) + '.</p>';
+      else {
+        var r = E.matchStudents(a, b, o); MF.res = r;
+        if (!r.grades.length) out = '<p class="msg bad">No student appears in both files with a readable score. Check the ID and score columns.</p>';
+        else {
+          var notes = [];
+          if (r.onlyEarlier) notes.push(r.onlyEarlier + ' only in the earlier file');
+          if (r.onlyLater) notes.push(r.onlyLater + ' only in the later file');
+          if (r.unreadable) notes.push(r.unreadable + ' with a score that could not be read' + (o.levels.length ? '' : ' (if the levels are words, list them in order above)'));
+          if (r.duplicates) notes.push(r.duplicates + ' repeated IDs (the first row was used)');
+          if (r.noGrade) notes.push(r.noGrade + ' with no grade');
+          out = '<p class="msg ok">' + r.matched + ' students are in both files.' + (notes.length ? ' Left out: ' + esc(notes.join('; ')) + '.' : '') + '</p>' +
+            '<div class="tbl-scroll"><table class="edit"><thead><tr><th scope="col">Grade</th><th scope="col">Students in both tests</th><th scope="col">Expected or better</th><th scope="col">Better than expected</th></tr></thead><tbody>' +
+            r.grades.map(function (g) { return '<tr><td>' + esc(g.grade) + '</td><td>' + g.E + '</td><td>' + g.G + ' (' + pc(g.G / g.E) + ')</td><td>' + g.H + ' (' + pc(g.H / g.E) + ')</td></tr>'; }).join('') + '</tbody></table></div>';
+        }
+      }
+    }
+    $('mf-out').innerHTML = out;
+    $('mf-use').disabled = !MF.res || !MF.res.grades.length;
+  }
+  $('match-card').addEventListener('change', function (e) {
+    var t = e.target;
+    if (t.dataset && t.dataset.mf != null) { MF.files[+t.dataset.mf][t.dataset.mk] = t.value === '' ? null : +t.value; }
+    if (t.dataset && t.dataset.mf != null || t.name === 'mf-rule' || t.id === 'mf-pct') renderMatch();
+  });
+  ['mf-band', 'mf-levels'].forEach(function (id) { $(id).addEventListener('input', function () { renderMatch(); }); });
+  function clearMatch() { MF.files = [null, null]; MF.res = null; $('mf-title').value = ''; renderMatch(); }
+  $('mf-clear').addEventListener('click', clearMatch);
+  $('mf-use').addEventListener('click', function () {
+    var r = MF.res; if (!r || !r.grades.length) return;
+    var o = mfOpts(), title = $('mf-title').value.trim() || 'Progress';
+    var rows = r.grades.map(function (g) { return { phase: '', grade: g.grade, E: g.E, G: g.G, H: g.H }; });
+    st.pendingRaw = null; // nothing from the student files goes to the assistant's sandbox
+    var names = MF.files.map(function (f) { return f.name; });
+    useWorkbook(Book.synthetic(rows, title, { pct: false }), 'two student files', Book.synthetic(rows, title, { pct: false }));
+    st.fromStudents = { earlier: names[0], later: names[1], matched: r.matched, onlyEarlier: r.onlyEarlier, onlyLater: r.onlyLater, unreadable: r.unreadable, duplicates: r.duplicates, noGrade: r.noGrade, rule: ruleWords(o) };
+    clearMatch(); openMatch(false);
+    msg('msg1', 'Counts made from ' + r.matched + ' students in both files. The student rows were not kept.', 'ok');
+  });
+
   /* ---------- the pipeline ---------- */
   var timer = null;
   function soon() { clearTimeout(timer); timer = setTimeout(recompute, 140); }
@@ -282,6 +377,12 @@
       'Limits: Weak at most ' + P(c.capWeak) + ', Outstanding at most ' + P(c.capOut) + ', counted over ' + basisTxt + '.',
       'Phase totals: ' + (c.totalMethod === 'points' ? 'average of grade points, rounding ' + (c.rounding === 'unspecified' ? 'not given (nearest point used for now, to be confirmed)' : c.rounding) : 'from summed student counts') + '.'
     ].concat((c.extraRules || []).map(function (r) { return 'Extra rule: ' + (r.label || E.ruleLabel(r)) + '.'; })) });
+    var fs1 = st.fromStudents;
+    if (fs1) secs.push({ heading: 'How the counts were made', bullets: [
+      'Counted on this page from two student-level files: ' + fs1.earlier + ' (earlier test) and ' + fs1.later + ' (later test), matched by student ID. The student rows were not kept.',
+      fs1.matched + ' students were in both files and are counted. Left out: ' + fs1.onlyEarlier + ' only in the earlier file, ' + fs1.onlyLater + ' only in the later file, ' + fs1.unreadable + ' with a score that could not be read, ' + fs1.duplicates + ' repeated IDs, ' + fs1.noGrade + ' with no grade.',
+      'Rule used: ' + fs1.rule
+    ] });
     secs.push({ heading: 'Corrections to the sheet', bullets: fx.length ? fx.map(function (f) { return f.what + ': ' + f.detail; }) : ['Nothing needed correcting.'] });
     var totals = m.items.filter(function (x) { return x.kind === 'total'; });
     if (totals.length) secs.push({ heading: 'Phase totals', table: { head: ['Phase', 'Average points', 'Rounded', 'Judgement', 'Note'], rows: totals.map(function (t) { return [(t.block && st.parsed.blocks.length > 1 ? t.block + ': ' : '') + t.label, t.avg == null ? '' : Math.round(t.avg * 100) / 100, t.rounded == null ? '' : t.rounded, t.judg, t.roundingFlag ? 'Rounding to confirm' : '']; }) } });
@@ -698,8 +799,9 @@
     var b = e.target.closest && e.target.closest('[data-dl]'); if (!b) return;
     download(b.dataset.dl, b.dataset.out || (b.dataset.dl === 'template' ? 'msg1' : 'msg6'));
   });
-  $('start-over').addEventListener('click', function () { st.src = null; st.origWb = null; st.headerRow = null; st.grid = null; st.parsed = null; st.base = null; st.sim = null; st.manual = null; st.edits = {}; st.wb = null; $('title').textContent = 'Progress Judgements'; $('sheet-pick').hidden = true; msg('msg1', 'Cleared. Nothing from that sheet is kept.', 'ok'); go(1); });
+  $('start-over').addEventListener('click', function () { clearMatch(); st.fromStudents = null; st.src = null; st.origWb = null; st.headerRow = null; st.grid = null; st.parsed = null; st.base = null; st.sim = null; st.manual = null; st.edits = {}; st.wb = null; $('title').textContent = 'Progress Judgements'; $('sheet-pick').hidden = true; msg('msg1', 'Cleared. Nothing from that sheet is kept.', 'ok'); go(1); });
 
+  window.openStudentMatching = function () { go(1); openMatch(true); return true; };
 /*ASSISTANT*/
   go(1);
 })();

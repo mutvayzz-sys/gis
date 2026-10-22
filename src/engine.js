@@ -16,6 +16,7 @@ var Engine = (function () {
       vwCountsAsWeak: true,
       capWeak: 0.20, capOut: 0.20,
       substantialPts: 10,
+      pctDecimals: 1,                 // decimal places shown in percentages on the page and in the workbook (0, 1 or 2)
       simTitle: 'Simulated scenario—not actual results',
       extraRules: [],                 // [{label, cats:[...], op:'max'|'min', share:0..1}]
       simLocked: [],                  // grade ids the simulation may not change

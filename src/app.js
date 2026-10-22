@@ -5,7 +5,7 @@
   var KEY = { 'Very Weak': 'vw', 'Weak': 'weak', 'Acceptable': 'acc', 'Good': 'good', 'Very Good': 'vg', 'Outstanding': 'out' };
   function dot(j) { return '<span class="dot k-' + (KEY[j] || 'acc') + '" aria-hidden="true"></span>'; }
   function tag(j) { return '<span class="judg">' + dot(j) + esc(j) + '</span>'; }
-  function pc(v, d) { return v == null ? '–' : (v * 100).toFixed(d == null ? 1 : d) + '%'; }
+  function pc(v, d) { if (d == null) d = st && (st.cfg.pctDecimals === 0 || st.cfg.pctDecimals === 2) ? st.cfg.pctDecimals : 1; return v == null ? '–' : (v * 100).toFixed(d) + '%'; }
 
   // All state lives here, in memory only.
   var st = { src: null, origWb: null, headerRow: null, srcName: '', sheetName: null, grid: null, parsed: null, cfg: E.defaults(), edits: {}, manual: null, base: null, sim: null, sel: 0, step: 1, wb: null, tabA: 0, tabS: 0 };
@@ -403,6 +403,7 @@
     document.querySelector('input[name="method"][value="' + c.totalMethod + '"]').checked = true;
     document.querySelector('input[name="round"][value="' + c.rounding + '"]').checked = true;
     document.querySelector('input[name="basis"][value="' + c.basis + '"]').checked = true;
+    var dpIn = document.querySelector('input[name="pctdp"][value="' + (c.pctDecimals == null ? 1 : c.pctDecimals) + '"]'); if (dpIn) dpIn.checked = true;
     $('points-box').hidden = c.totalMethod !== 'points';
     $('round-flag').hidden = !(c.totalMethod === 'points' && c.rounding === 'unspecified');
     if (!$('pts').children.length) $('pts').innerHTML = E.CATS.slice().reverse().map(function (k) { return '<label class="pt">' + tag(k) + '<input type="number" min="0" max="20" step="1" data-pt="' + esc(k) + '" aria-label="Points for ' + esc(k) + '"></label>'; }).join('');
@@ -454,6 +455,7 @@
     if (t.name === 'method') { st.cfg.totalMethod = t.value; renderRules(); soon(); }
     if (t.name === 'round') { st.cfg.rounding = t.value; renderRules(); soon(); }
     if (t.name === 'basis') { st.cfg.basis = t.value; st.sel = 0; renderRules(); soon(); }
+    if (t.name === 'pctdp') { st.cfg.pctDecimals = +t.value; st.wb = null; renderRules(); soon(); }
   });
   $('reset-rules').addEventListener('click', function () { var cols = st.cfg.columns; st.cfg = E.defaults(); st.cfg.columns = cols; renderRules(); soon(); });
 

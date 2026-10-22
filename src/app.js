@@ -269,17 +269,21 @@
   // One plain-language account of the results, used by the PDF report and the workbook's Summary sheet.
   function summaryOf() {
     var c = st.cfg, m = st.base, k = E.check(E.counted(m.items, c.basis), c), fx = E.findFixes(st.parsed, c).fixes;
-    var basisTxt = { both: 'grade and phase total judgements', grades: 'grade judgements', phases: 'phase total judgements' }[c.basis];
+    var basisTxt = { both: 'grade and phase total judgements', grades: 'grade judgements', phases: 'phase total judgements', each: 'grade and phase total judgements' }[c.basis];
+    var ksA = E.checkScopes(m, st.parsed, c);
+    function scopeRows(kk) { return kk.scopes.map(function (x) { return [x.label.charAt(0).toUpperCase() + x.label.slice(1), x.check.n, x.check.weak + ' (at most ' + x.check.maxW + ')', x.check.out + ' (at most ' + x.check.maxO + ')', x.check.weakOk && x.check.outOk ? 'Met' : 'Not met']; }); }
     var P = function (v) { return Math.round(v * 1000) / 10 + '%'; };
     var secs = [];
-    var verdict = k.weakOk && k.outOk && k.extraOk ? 'The actual results meet the targets.' : 'The actual results do not meet the targets.';
-    secs.push({ heading: 'Result', text: verdict + ' ' + k.weak + ' of ' + k.n + ' ' + basisTxt + ' are Weak (' + P(k.n ? k.weak / k.n : 0) + '; at most ' + k.maxW + ' allowed). ' + k.out + ' are Outstanding (' + P(k.n ? k.out / k.n : 0) + '; at most ' + k.maxO + ' allowed).' + (k.extra.length ? ' ' + k.extra.map(function (x) { return x.label + ': ' + (x.ok ? 'met' : 'not met') + ' (' + x.count + ' of ' + k.n + ').'; }).join(' ') : '') });
+    var verdict = ksA.weakOk && ksA.outOk && ksA.extraOk ? 'The actual results meet the targets.' : 'The actual results do not meet the targets.';
+    if (ksA.many) { var nm = ksA.scopes.filter(function (x) { return !x.check.allOk; }); secs.push({ heading: 'Result', text: verdict + ' The limits are checked ' + ksA.scopes.length + ' times, once for each ' + (st.parsed.blocks.length > 1 && c.limitScope === 'subject' ? 'subject' : '') + (st.parsed.blocks.length > 1 && c.limitScope === 'subject' && c.basis === 'each' ? ' and ' : '') + (c.basis === 'each' ? 'level (grades, phase totals)' : '') + '. ' + (nm.length ? 'Not met: ' + nm.map(function (x) { return x.label; }).join('; ') + '.' : 'All are met.') }); }
+    else secs.push({ heading: 'Result', text: verdict + ' ' + k.weak + ' of ' + k.n + ' ' + basisTxt + ' are Weak (' + P(k.n ? k.weak / k.n : 0) + '; at most ' + k.maxW + ' allowed). ' + k.out + ' are Outstanding (' + P(k.n ? k.out / k.n : 0) + '; at most ' + k.maxO + ' allowed).' + (k.extra.length ? ' ' + k.extra.map(function (x) { return x.label + ': ' + (x.ok ? 'met' : 'not met') + ' (' + x.count + ' of ' + k.n + ').'; }).join(' ') : '') });
+    if (ksA.many) secs.push({ heading: 'Each limit check (actual)', text: 'The limits are checked separately for ' + (st.parsed.blocks.length > 1 && c.limitScope === 'subject' ? 'each subject' : 'the whole sheet') + (c.basis === 'each' ? ', once on the grades and once on the phase totals' : '') + '. Every check has to be met.', table: { head: ['Checked on', 'Judgements', 'Weak', 'Outstanding', 'Result'], rows: scopeRows(ksA) } });
     var d = k.d, cats = E.CATS.slice().reverse();
     secs.push({ heading: 'How many of each judgement (actual)', table: { head: ['Judgement', 'Count', 'Share'], rows: cats.map(function (x) { return [x, d.counts[x], P(d.n ? d.counts[x] / d.n : 0)]; }).concat([['Total', d.n, '100%']]) } });
     secs.push({ heading: 'Rules used', bullets: [
       'Acceptable: at least ' + P(c.acc) + ' make expected or better progress' + (c.vw != null ? '; Very Weak below ' + P(c.vw) : '') + '.',
       'Good, Very Good, Outstanding: at least ' + P(c.good) + ', ' + P(c.vg) + ', ' + P(c.out) + ' make better than expected progress.',
-      'Limits: Weak at most ' + P(c.capWeak) + ', Outstanding at most ' + P(c.capOut) + ', counted over ' + basisTxt + '.',
+      'Limits: Weak at most ' + P(c.capWeak) + ', Outstanding at most ' + P(c.capOut) + ', counted over ' + basisTxt + (c.basis === 'each' ? ' (grades and phase totals checked separately)' : '') + (st.parsed.blocks.length > 1 && c.limitScope === 'subject' ? ', for each subject on its own' : '') + '.',
       'Phase totals: ' + (c.totalMethod === 'points' ? 'average of grade points, rounding ' + (c.rounding === 'unspecified' ? 'not given (nearest point used for now, to be confirmed)' : c.rounding) : 'from summed student counts') + '.'
     ].concat((c.extraRules || []).map(function (r) { return 'Extra rule: ' + (r.label || E.ruleLabel(r)) + '.'; })) });
     secs.push({ heading: 'Corrections to the sheet', bullets: fx.length ? fx.map(function (f) { return f.what + ': ' + f.detail; }) : ['Nothing needed correcting.'] });
@@ -292,6 +296,8 @@
     else {
       var ks = o.check;
       secs.push({ heading: c.simTitle, tone: 'sim', text: 'For internal planning only. These are planning assumptions, not actual results. Option ' + String.fromCharCode(65 + st.sel) + ' of ' + s.options.length + ': ' + o.changed.length + ' judgements change, ' + o.students + ' students (' + P(o.share) + ' of assessed students). Largest change in one grade: ' + o.maxPts.toFixed(1) + ' percentage points' + (o.substantial ? ', which is a substantial adjustment' : '') + '. With these assumptions, ' + ks.weak + ' of ' + ks.n + ' are Weak and ' + ks.out + ' Outstanding.' });
+      var ksO = o.scopes || E.checkScopes(o.model, st.parsed, c);
+      if (ksO.many) secs.push({ heading: 'Each limit check (simulated)', tone: 'sim', table: { head: ['Checked on', 'Judgements', 'Weak', 'Outstanding', 'Result'], rows: scopeRows(ksO) } });
       secs.push({ heading: 'Planning assumptions', tone: 'sim', table: { head: ['Grade', 'Assumed change', 'From', 'To', 'Points', 'Judgement'], rows: o.cells.map(function (x) { return [(st.parsed.blocks.length > 1 ? x.to.block + ': ' : '') + x.to.grade, (x.dG ? (x.dG > 0 ? '+' : '') + x.dG + ' expected or better' : '') + (x.dH ? (x.dG ? ', ' : '') + (x.dH > 0 ? '+' : '') + x.dH + ' better than expected' : ''), x.from.G + ' / ' + x.from.H, x.to.G + ' / ' + x.to.H, x.pp.toFixed(1), x.from.judg + ' to ' + x.to.judg]; }) } });
       var tc = o.changed.filter(function (x) { return x.from.kind === 'total'; });
       if (tc.length) secs.push({ heading: 'Phase totals that change as a result', tone: 'sim', bullets: tc.map(function (x) { return x.to.label + ': ' + x.from.judg + ' to ' + x.to.judg + '.'; }) });
@@ -403,6 +409,10 @@
     document.querySelector('input[name="method"][value="' + c.totalMethod + '"]').checked = true;
     document.querySelector('input[name="round"][value="' + c.rounding + '"]').checked = true;
     document.querySelector('input[name="basis"][value="' + c.basis + '"]').checked = true;
+    var multiSubj = !!(st.parsed && st.parsed.blocks.length > 1);
+    $('scope-box').hidden = !multiSubj;
+    document.querySelector('input[name="scope"][value="' + (c.limitScope === 'subject' ? 'subject' : 'sheet') + '"]').checked = true;
+    $('basis-note').textContent = c.basis === 'each' || (multiSubj && c.limitScope === 'subject') ? 'The limits are checked separately for ' + (multiSubj && c.limitScope === 'subject' ? 'each subject' : 'the whole sheet') + (c.basis === 'each' ? ', once on the grades and once on the phase totals' : '') + '. Every check has to be met, and the simulation meets all of them.' : '';
     $('points-box').hidden = c.totalMethod !== 'points';
     $('round-flag').hidden = !(c.totalMethod === 'points' && c.rounding === 'unspecified');
     if (!$('pts').children.length) $('pts').innerHTML = E.CATS.slice().reverse().map(function (k) { return '<label class="pt">' + tag(k) + '<input type="number" min="0" max="20" step="1" data-pt="' + esc(k) + '" aria-label="Points for ' + esc(k) + '"></label>'; }).join('');
@@ -454,6 +464,7 @@
     if (t.name === 'method') { st.cfg.totalMethod = t.value; renderRules(); soon(); }
     if (t.name === 'round') { st.cfg.rounding = t.value; renderRules(); soon(); }
     if (t.name === 'basis') { st.cfg.basis = t.value; st.sel = 0; renderRules(); soon(); }
+    if (t.name === 'scope') { st.cfg.limitScope = t.value; st.sel = 0; renderRules(); soon(); }
   });
   $('reset-rules').addEventListener('click', function () { var cols = st.cfg.columns; st.cfg = E.defaults(); st.cfg.columns = cols; renderRules(); soon(); });
 
@@ -483,6 +494,12 @@
       return '<div class="pc"><b>' + esc(title) + ' total</b>' + body + '</div>';
     });
   }
+  // One row per limit check (a subject and/or a level), with the Weak and Outstanding counts against their limits.
+  function scopeTable(ks) {
+    function cell(n, lim) { return n + ' <span class="muted small">of at most ' + lim + '</span>'; }
+    return '<thead><tr><th scope="col">Checked on</th><th scope="col">Judgements</th><th scope="col">Weak</th><th scope="col">Outstanding</th><th scope="col">Result</th></tr></thead><tbody>' +
+      ks.scopes.map(function (s) { var k = s.check, ok = k.weakOk && k.outOk; return '<tr><td>' + esc(s.label.charAt(0).toUpperCase() + s.label.slice(1)) + '</td><td>' + k.n + '</td><td>' + cell(k.weak, k.maxW) + '</td><td>' + cell(k.out, k.maxO) + '</td><td><span class="judg"><span class="dot ' + (ok ? 'ok' : 'bad') + '" aria-hidden="true"></span>' + (ok ? 'Met' : 'Not met') + '</span></td></tr>'; }).join('') + '</tbody>';
+  }
   function tilesBlock(model, base, c) {
     var levels = [['Grades', 'grades'], ['Phase totals', 'phases']];
     var html = levels.map(function (lv) {
@@ -490,7 +507,7 @@
       var k = E.check(list, c);
       var baseIds = {}; if (base) base.items.forEach(function (x) { baseIds[x.id] = x; });
       var order = E.CATS; list = list.slice().sort(function (a, b) { return order.indexOf(a.judg) - order.indexOf(b.judg); });
-      return '<div class="tiles-row"><div class="lab"><b>' + lv[0] + '</b><span class="muted">' + k.weak + ' of ' + k.n + ' Weak' + (c.basis === 'both' ? '' : (c.basis === lv[1] ? ', counted toward the limit' : ', not counted')) + '</span></div><ul class="tiles" aria-label="' + esc(lv[0]) + '">' +
+      return '<div class="tiles-row"><div class="lab"><b>' + lv[0] + '</b><span class="muted">' + k.weak + ' of ' + k.n + ' Weak' + (c.basis === 'both' ? '' : (E.levelCounts(c.basis, lv[1]) ? (c.basis === 'each' ? ', checked on its own' : ', counted toward the limit') : ', not counted')) + '</span></div><ul class="tiles" aria-label="' + esc(lv[0]) + '">' +
         list.map(function (it) { var ch = base && baseIds[it.id] && baseIds[it.id].judg !== it.judg; return '<li class="tile" title="' + esc(it.label + ': ' + it.judg + (ch ? ' (was ' + baseIds[it.id].judg + ')' : '')) + '"><span class="sq k-' + (KEY[it.judg] || 'acc') + (ch ? ' changed' : '') + '"></span><span class="tl">' + esc(short(it)) + '</span></li>'; }).join('') + '</ul></div>';
     }).join('');
     var used = {}; model.items.forEach(function (x) { used[x.judg] = 1; });
@@ -511,13 +528,17 @@
 
   /* ---------- step 4: results ---------- */
   function renderResults() {
-    var c = st.cfg, m = st.base, k = E.check(E.counted(m.items, c.basis), c), fx = E.findFixes(st.parsed, c);
-    var basisTxt = { both: 'grades and phase totals', grades: 'grades', phases: 'phase totals' }[c.basis];
+    var c = st.cfg, m = st.base, k = E.check(E.counted(m.items, c.basis), c), fx = E.findFixes(st.parsed, c), ks = E.checkScopes(m, st.parsed, c);
+    var basisTxt = { both: 'grades and phase totals', grades: 'grades', phases: 'phase totals', each: 'grades and phase totals' }[c.basis];
+    var nBadW = ks.scopes.filter(function (x) { return !x.check.weakOk; }).length, nBadO = ks.scopes.filter(function (x) { return !x.check.outOk; }).length;
+    var limW = ks.many ? (nBadW ? 'Over the limit in ' + nBadW + ' of ' + ks.scopes.length + ' checks.' : 'Within the limit in all ' + ks.scopes.length + ' checks.') : 'Limit: ' + k.maxW + '.';
+    var limO = ks.many ? (nBadO ? 'Over the limit in ' + nBadO + ' of ' + ks.scopes.length + ' checks.' : 'Within the limit in all ' + ks.scopes.length + ' checks.') : 'Limit: ' + k.maxO + '.';
     $('kpis').innerHTML =
-      '<div class="kpi ' + (k.weakOk ? 'ok' : 'bad') + '"><span class="l">Weak</span><span class="v">' + k.weak + ' of ' + k.n + '</span><span class="s">' + pc(k.n ? k.weak / k.n : 0) + ' of ' + basisTxt + '. Limit: ' + k.maxW + '.</span></div>' +
-      '<div class="kpi ' + (k.outOk ? 'ok' : 'bad') + '"><span class="l">Outstanding</span><span class="v">' + k.out + ' of ' + k.n + '</span><span class="s">' + pc(k.n ? k.out / k.n : 0) + '. Limit: ' + k.maxO + '.</span></div>' +
+      '<div class="kpi ' + (ks.weakOk ? 'ok' : 'bad') + '"><span class="l">Weak</span><span class="v">' + k.weak + ' of ' + k.n + '</span><span class="s">' + pc(k.n ? k.weak / k.n : 0) + ' of ' + basisTxt + '. ' + limW + '</span></div>' +
+      '<div class="kpi ' + (ks.outOk ? 'ok' : 'bad') + '"><span class="l">Outstanding</span><span class="v">' + k.out + ' of ' + k.n + '</span><span class="s">' + pc(k.n ? k.out / k.n : 0) + '. ' + limO + '</span></div>' +
       k.extra.map(function (x) { return '<div class="kpi ' + (x.ok ? 'ok' : 'bad') + '"><span class="l">' + esc(x.label) + '</span><span class="v">' + x.count + ' of ' + k.n + '</span><span class="s">' + (x.op === 'min' ? 'Needs ' : 'Allowed: ') + x.limit + '. ' + (x.ok ? 'Met.' : 'Not met.') + '</span></div>'; }).join('') +
       '<div class="kpi"><span class="l">Fixed in the sheet</span><span class="v">' + fx.fixes.length + '</span><span class="s">' + (fx.fixes.length ? 'No student numbers changed' : 'Nothing needed fixing') + '</span></div>';
+    $('scope-card').hidden = !ks.many; if (ks.many) $('scope-a').innerHTML = scopeTable(ks);
     $('tiles-actual').innerHTML = tilesBlock(m, null, c);
     $('bars').innerHTML = barsBlock(m, c);
     var cards = phaseCards(m, c);
@@ -555,7 +576,7 @@
     renderSimLimits();
     if (!s.needed) { $('sim-status').innerHTML = '<div class="big-flag ok"><span class="dot ok"></span><span><b>Already within both limits.</b> The actual results meet the targets, so nothing needs simulating.</span></div>'; $('sim-body').hidden = true; return; }
     if (s.failed && s.limited) { $('sim-status').innerHTML = '<div class="big-flag bad"><span class="dot bad"></span><span><b>No option fits inside your limits for the simulation.</b> Loosen them below, for example allow more students per grade or let another grade change.</span></div>'; $('sim-body').hidden = true; return; }
-    if (s.failed) { $('sim-status').innerHTML = '<div class="big-flag bad"><span class="dot bad"></span><span><b>No simulation can meet the limits with these rules.</b> ' + (c.basis === 'phases' ? 'With only phase totals counted, the limit may allow no Weak results at all. Try counting grades and totals together.' : 'Check the limits and which judgements count.') + '</span></div>'; $('sim-body').hidden = true; return; }
+    if (s.failed) { $('sim-status').innerHTML = '<div class="big-flag bad"><span class="dot bad"></span><span><b>No simulation can meet the limits with these rules' + (s.scope ? ' (' + esc(s.scope) + ')' : '') + '.</b> ' + (c.basis === 'phases' ? 'With only phase totals counted, the limit may allow no Weak results at all. Try counting grades and totals together.' : 'Check the limits and which judgements count.') + '</span></div>'; $('sim-body').hidden = true; return; }
     $('sim-body').hidden = false;
     var o = s.options[st.sel];
     $('sim-status').innerHTML = '<div class="kpis"><div class="kpi sim"><span class="l">Judgements that change</span><span class="v">' + o.changed.length + '</span><span class="s">The fewest possible</span></div><div class="kpi sim"><span class="l">Students</span><span class="v">' + o.students + '</span><span class="s">' + pc(o.share) + ' of assessed students</span></div><div class="kpi ' + (o.substantial ? 'bad' : '') + '"><span class="l">Largest change in one grade</span><span class="v">' + o.maxPts.toFixed(1) + '</span><span class="s">percentage points' + (o.substantial ? ', substantial' : '') + '</span></div></div>';
@@ -575,7 +596,7 @@
     [['Grades', 'grades'], ['Phase totals', 'phases'], ['All', 'both']].forEach(function (lv) {
       var la = E.counted(st.base.items, lv[1]), ls = E.counted(o.model.items, lv[1]); if (!la.length) return;
       var ka = E.check(la, c), ks = E.check(ls, c), capX = c.capWeak * 100;
-      ba += '<div><div class="muted small" style="margin-bottom:4px"><b>' + lv[0] + '</b>' + (c.basis === lv[1] ? ' (counted toward the limit)' : '') + '</div>' +
+      ba += '<div><div class="muted small" style="margin-bottom:4px"><b>' + lv[0] + '</b>' + (lv[1] !== 'both' && c.basis !== 'both' && E.levelCounts(c.basis, lv[1]) ? (c.basis === 'each' ? ' (checked on its own)' : ' (counted toward the limit)') : (c.basis === lv[1] ? ' (counted toward the limit)' : '')) + '</div>' +
         '<div class="ba-row"><span>Actual</span><span class="stack">' + stack(la) + '<i class="cap" style="left:' + capX + '%"></i></span><span class="' + (ka.weakOk ? '' : 'bad') + '" style="color:' + (ka.weakOk ? 'var(--ok)' : 'var(--bad)') + '">' + ka.weak + ' Weak</span></div>' +
         '<div class="ba-row" style="margin-top:6px"><span style="color:var(--sim);font-weight:600">Simulated</span><span class="stack">' + stack(ls) + '<i class="cap" style="left:' + capX + '%"></i></span><span style="color:' + (ks.weakOk ? 'var(--ok)' : 'var(--bad)') + '">' + ks.weak + ' Weak</span></div></div>';
     });
@@ -595,6 +616,7 @@
     o.changed.filter(function (x) { return x.from.kind === 'total'; }).forEach(function (x) { items.push('<li><span class="dot"></span><span><b>' + esc(x.to.label) + '</b> changes on its own because its grades changed. ' + tag(x.from.judg) + ' <span class="arrow">→</span> ' + tag(x.to.judg) + '</span></li>'); });
     items.push('<li><span class="dot"></span><span>Everything else keeps its actual value. Cohort sizes, assessed totals and thresholds are unchanged.</span></li>');
     $('assume').innerHTML = items.join('');
+    var kso = o.scopes || E.checkScopes(o.model, st.parsed, c); $('scope-sim-card').hidden = !kso.many; if (kso.many) $('scope-s').innerHTML = scopeTable(kso);
     $('tiles-sim').innerHTML = tilesBlock(o.model, st.base, c);
     viewer('xl-s-grid', 'xl-s-tabs', [Book.simSheetName(c), Book.NAMES.comp, Book.NAMES.counts, Book.NAMES.totals], Math.min(st.tabS, 3), 's');
   }

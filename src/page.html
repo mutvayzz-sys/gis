@@ -387,6 +387,14 @@ body.asst-open .asst-fab { display: none; }
 .rows-tbl td.x { width: 40px; }
 .rows-tbl .rm { appearance: none; border: 0; background: transparent; color: var(--fg-3); width: 34px; height: 34px; border-radius: 8px; cursor: pointer; display: grid; place-items: center; transition: background-color 150ms ease, color 150ms ease; }
 .rows-tbl .rm:hover { background: var(--muted); color: var(--bad); } .rows-tbl .rm svg { width: 16px; height: 16px; }
+.basis-f { grid-column: 1 / -1; }
+@media (max-width: 560px) {
+  #basis, #scope { display: grid; grid-auto-flow: row; grid-template-columns: repeat(2, minmax(0, 1fr)); overflow: visible; }
+  #basis label, #scope label { white-space: normal; }
+}
+.scope-tbl td, .scope-tbl th { white-space: nowrap; }
+.scope-tbl td:first-child { white-space: normal; min-width: 160px; }
+.scope-tbl .judg .dot { margin-right: 6px; }
 .rows-top { display: flex; flex-wrap: wrap; gap: var(--s3); align-items: end; justify-content: space-between; margin-bottom: var(--s3); }
 .rows-top .field { min-width: 200px; flex: 1 1 220px; max-width: 360px; }
 @media (max-width: 560px) { .rows-tbl th { white-space: normal; vertical-align: bottom; line-height: 1.2; } .rows-tbl input { min-width: 52px; padding: 0 6px; } .rows-tbl td.x { width: 34px; } }
@@ -528,13 +536,20 @@ body.asst-open .asst-fab { display: none; }
       <div class="grid3">
         <label class="field"><span>Weak: at most</span><span class="pctin"><input type="number" id="cap-w" min="0" max="100" step="1" inputmode="decimal"><span>% of judgements</span></span></label>
         <label class="field"><span>Outstanding: at most</span><span class="pctin"><input type="number" id="cap-o" min="0" max="100" step="1" inputmode="decimal"><span>% of judgements</span></span></label>
-        <div class="field"><span>Which judgements count</span>
+        <div class="field basis-f"><span>Which judgements count</span>
           <div class="seg" role="radiogroup" aria-label="Which judgements count" id="basis">
             <label><input type="radio" name="basis" value="both">Grades + totals <small id="n-both"></small></label>
             <label><input type="radio" name="basis" value="grades">Grades <small id="n-grades"></small></label>
             <label><input type="radio" name="basis" value="phases">Totals <small id="n-phases"></small></label>
+            <label><input type="radio" name="basis" value="each">Each on its own</label>
           </div></div>
       </div>
+      <div class="field" id="scope-box" hidden><span>Apply the limits to</span>
+        <div class="seg" role="radiogroup" aria-label="Apply the limits to" id="scope">
+          <label><input type="radio" name="scope" value="sheet">All subjects together</label>
+          <label><input type="radio" name="scope" value="subject">Each subject on its own</label>
+        </div></div>
+      <p class="muted small" id="basis-note"></p>
       <details class="more"><summary>More settings</summary>
         <div class="grid2">
           <label class="row small"><input type="checkbox" id="use-assessed"> Work percentages out of students assessed (uses the “% assessed” column)</label>
@@ -563,6 +578,7 @@ body.asst-open .asst-fab { display: none; }
   <section class="step" id="step-4" data-step="4" aria-labelledby="h4s" hidden>
     <div class="step-head"><h2 id="h4s">The actual results</h2><p>Real numbers, with any adding-up mistakes fixed. Nothing here is simulated.</p></div>
     <div class="kpis" id="kpis"></div>
+    <div class="card" id="scope-card" hidden><h3>Each limit check</h3><div class="tbl-scroll"><table class="edit scope-tbl" id="scope-a"></table></div></div>
     <div class="card"><h3>Every judgement at a glance</h3><div class="tiles-wrap" id="tiles-actual"></div></div>
     <div class="card"><h3>Grade by grade</h3><p class="muted small">The bar is the share making expected or better progress. The black line is the Acceptable mark.</p><div id="bars"></div></div>
     <div class="card" id="phase-card"><h3>Phase totals</h3><div class="phasecards" id="phasecards"></div></div>
@@ -590,6 +606,7 @@ body.asst-open .asst-fab { display: none; }
         <div class="card"><h3>Before and after</h3><div class="ba" id="ba"></div></div>
         <div class="card"><h3>What changes</h3><div class="dumb" id="dumb"></div></div>
       </div>
+      <div class="card" id="scope-sim-card" style="margin-top:var(--s4)" hidden><h3>Each limit check, simulated</h3><div class="tbl-scroll"><table class="edit scope-tbl" id="scope-s"></table></div></div>
       <div class="card sim" style="margin-top:var(--s4)"><h3>Planning assumptions</h3><ul class="assume" id="assume"></ul></div>
       <div class="card" style="margin-top:var(--s4)"><h3>Every judgement, after</h3><div class="tiles-wrap" id="tiles-sim"></div></div>
       <div class="xl" id="xl-s" style="margin-top:var(--s4)"><div id="xl-s-grid" class="xl-scroll"></div><div class="xl-tabs" id="xl-s-tabs" role="tablist" aria-label="Sheets"></div></div>

@@ -50,10 +50,11 @@ var Book = (function (E) {
       ['Rounding rule for decimal averages', ruleText(cfg.rounding)],
       ['Rounding rule number (used by formulas)', { formula: 'MATCH(' + S.rule + ',{"' + RULES.join('","') + '"},0)' }],
       ['How a phase total is judged', cfg.totalMethod === 'points' ? 'Average of its grade judgements (points)' : 'From summed student counts'],
-      ['Which judgements count toward the limits', { both: 'Grades and phase totals', grades: 'Grades only', phases: 'Phase totals only' }[cfg.basis]],
+      ['Which judgements count toward the limits', { both: 'Grades and phase totals', grades: 'Grades only', phases: 'Phase totals only', each: 'Grades and phase totals, each checked on its own' }[cfg.basis]],
       ['Count Very Weak with Weak for the limit', cfg.vwCountsAsWeak ? 'Yes' : 'No'],
       ['Use the % assessed column', cfg.useAssessed ? 'Yes' : 'No'],
-      ['Flag an adjustment as substantial above (percentage points)', cfg.substantialPts]
+      ['Flag an adjustment as substantial above (percentage points)', cfg.substantialPts],
+      ['Limits applied to', cfg.limitScope === 'subject' ? 'Each subject (table) on its own' : 'All subjects (tables) together']
     ];
     (cfg.extraRules || []).forEach(function (r, i) { rows.push(['Extra rule ' + (i + 1), r.label || E.ruleLabel(r)]); });
     rows.forEach(function (r, i) {
@@ -533,7 +534,7 @@ var Book = (function (E) {
     shareRows.forEach(function (r) { for (var i = 0; i < 6; i++) ws.getCell(r, 3 + i).numFmt = '0.0%'; });
     metRows.forEach(function (r) { for (var i = 0; i < 6; i++) { var x = ws.getCell(r, 3 + i); x.font = font({ bold: true, color: x.value.result === 'Yes' ? 'FF375623' : 'FFC00000' }); } });
     var note = ws.getCell(tr + 7 + xr.length * 2, 2);
-    note.value = 'The targets are checked on: ' + { both: 'all judgements (grades and phase totals)', grades: 'grade judgements only', phases: 'phase total judgements only' }[cfg.basis] + '. With few judgements, a 20% limit allows very few Weak results (for example, 0 of 3).';
+    note.value = 'The targets are checked on: ' + { both: 'all judgements (grades and phase totals)', grades: 'grade judgements only', phases: 'phase total judgements only', each: 'grade judgements and phase total judgements, each on its own' }[cfg.basis] + (cfg.limitScope === 'subject' && ctx.parsed.blocks.length > 1 ? ', for each subject on its own (see the Summary sheet)' : '') + '. With few judgements, a 20% limit allows very few Weak results (for example, 0 of 3).';
     note.font = font({ italic: true, color: 'FF595959' });
   }
 

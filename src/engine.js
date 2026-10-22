@@ -12,7 +12,8 @@ var Engine = (function () {
       totalMethod: 'points',          // 'points' | 'counts'
       rounding: 'unspecified',        // 'unspecified' | 'nearest' | 'down' | 'up'
       useAssessed: true,
-      basis: 'both',                  // 'both' | 'grades' | 'phases'
+      basis: 'both',                  // 'both' | 'grades' | 'phases' | 'each' (grades and phase totals checked separately)
+      limitScope: 'sheet',            // 'sheet' (all tables together) | 'subject' (each table, e.g. subject, on its own)
       vwCountsAsWeak: true,
       capWeak: 0.20, capOut: 0.20,
       substantialPts: 10,
@@ -290,7 +291,31 @@ var Engine = (function () {
     return { units: units, items: items };
   }
   function counted(items, basis) {
-    return items.filter(function (it) { return basis === 'both' || (basis === 'grades' ? it.kind === 'grade' : it.kind === 'total'); });
+    return items.filter(function (it) { return basis === 'grades' ? it.kind === 'grade' : basis === 'phases' ? it.kind === 'total' : true; });
+  }
+  // Does a judgement at this level ('grades' or 'phases') count toward the limits?
+  function levelCounts(basis, level) { return basis === 'both' || basis === 'each' || basis === level; }
+  var LEVEL_NAME = { both: 'grades and phase totals', grades: 'grades', phases: 'phase totals' };
+  // The groups the Weak and Outstanding limits are checked on: the whole sheet or each table (subject),
+  // and grades and phase totals together or each level on its own.
+  function scopes(model, parsed, c) {
+    var blocks = parsed.blocks, bySubject = c.limitScope === 'subject' && blocks.length > 1;
+    var levels = c.basis === 'each' ? ['grades', 'phases'] : [c.basis];
+    var subj = bySubject ? blocks.map(function (b) { return { id: b.id, title: b.title }; }) : [{ id: null, title: null }];
+    var out = [];
+    subj.forEach(function (s) {
+      var items = s.id == null ? model.items : model.items.filter(function (it) { return it.blockId === s.id; });
+      levels.forEach(function (lv) {
+        var list = counted(items, lv); if (!list.length) return;
+        out.push({ blockId: s.id, subject: s.title, level: lv, label: (s.title ? s.title + ', ' : '') + LEVEL_NAME[lv], list: list });
+      });
+    });
+    return out;
+  }
+  function checkScopes(model, parsed, c) {
+    var sc = scopes(model, parsed, c).map(function (s) { s.check = check(s.list, c); return s; });
+    return { scopes: sc, many: sc.length > 1, weakOk: sc.every(function (s) { return s.check.weakOk; }), outOk: sc.every(function (s) { return s.check.outOk; }), extraOk: sc.every(function (s) { return s.check.extraOk; }),
+      allOk: sc.every(function (s) { return s.check.allOk; }) };
   }
   function dist(list) {
     var counts = {}; CATS.forEach(function (k) { counts[k] = 0; });
@@ -403,7 +428,39 @@ var Engine = (function () {
   }
   function evaluate(parsed, c, overrides) { return build(parsed, c, overrides); }
   function key(id, parsed) { return id; }
+  // Simulation against every scope: each subject and level is solved in turn, keeping the changes
+  // already made as fixed, then every option is checked against all of them together.
   function simulate(parsed, c, maxOptions) {
+    maxOptions = maxOptions || 6;
+    var base = build(parsed, c), sc0 = checkScopes(base, parsed, c);
+    if (!(c.limitScope === 'subject' && parsed.blocks.length > 1) && c.basis !== 'each') { var r1 = simulateOne(parsed, c, maxOptions); r1.scopes = sc0; (r1.options || []).forEach(function (o) { o.scopes = checkScopes(o.model, parsed, c); }); return r1; }
+    var ids = {}; base.items.forEach(function (it) { if (it.kind === 'grade') ids[it.id] = 1; });
+    var own = {}; Object.keys(c.simPinned || {}).forEach(function (k) { if (ids[k]) own[k] = Object.assign({}, c.simPinned[k]); });
+    var hasOwn = Object.keys(own).length > 0, chk0 = check(counted(base.items, c.basis), c);
+    if (sc0.weakOk && sc0.outOk && !hasOwn) return { needed: false, base: base, check: chk0, scopes: sc0 };
+    var pinned = JSON.parse(JSON.stringify(own)), variants = null;
+    var plan = sc0.scopes.map(function (s) { return { blockId: s.blockId, level: s.level, label: s.label }; });
+    for (var i = 0; i < plan.length; i++) {
+      var p = plan[i];
+      var sub = p.blockId == null ? parsed : { blocks: parsed.blocks.filter(function (b) { return b.id === p.blockId; }), hasFormulas: parsed.hasFormulas, sheetName: parsed.sheetName, source: parsed.source };
+      var c2 = Object.assign({}, c, { basis: p.level, limitScope: 'sheet', simPinned: pinned });
+      var r = simulateOne(sub, c2, maxOptions);
+      if (r.failed) return { needed: true, failed: true, base: base, check: chk0, scopes: sc0, reason: r.reason, scope: p.label, limited: r.limited };
+      if (!r.needed || !r.options || !r.options.length) continue;
+      variants = r.options.map(function (o) { var ov = Object.assign({}, pinned); Object.keys(o.overrides).forEach(function (k) { if (ids[k]) ov[k] = Object.assign({}, o.overrides[k]); }); return ov; });
+      // Each option keeps the changes fixed so far (other subjects included). Later scopes build on the first one;
+      // the other options of the last scope solved stay as alternatives.
+      pinned = variants[0];
+    }
+    var finals = (variants || [pinned]).filter(function (ov) { var k = checkScopes(build(parsed, c, ov), parsed, c); return k.weakOk && k.outOk; });
+    if (!finals.length) return { needed: true, failed: true, base: base, check: chk0, scopes: sc0, reason: sc0.weakOk ? 'out' : 'weak', limited: !!((c.simLocked || []).length || c.simMaxStudents != null || c.simMaxPts != null) };
+    var withExtra = finals.filter(function (ov) { return checkScopes(build(parsed, c, ov), parsed, c).extraOk; }); if (withExtra.length) finals = withExtra;
+    var res = describeOptions(parsed, c, base, chk0, finals.map(function (ov) { return { overrides: ov, extras: 0 }; }), hasOwn, maxOptions);
+    res.scopes = sc0; res.options.forEach(function (o) { o.scopes = checkScopes(o.model, parsed, c); });
+    res.options.sort(function (a, b) { return a.changed.length - b.changed.length || a.students - b.students; });
+    return res;
+  }
+  function simulateOne(parsed, c, maxOptions) {
     maxOptions = maxOptions || 6;
     var base = build(parsed, c);
     var chk0 = check(counted(base.items, c.basis), c);
@@ -413,7 +470,7 @@ var Engine = (function () {
     if (chk0.weakOk && chk0.outOk && !hasPinned) return { needed: false, base: base, check: chk0 };
     var overrides = JSON.parse(JSON.stringify(pinned));
     var chkP = check(counted(build(parsed, c, overrides).items, c.basis), c);
-    if (hasPinned && chkP.weakOk && chkP.outOk) { var only = [{ overrides: overrides, extras: 0 }]; return describe(only, true); }
+    if (hasPinned && chkP.weakOk && chkP.outOk) { var only = [{ overrides: overrides, extras: 0 }]; return describeOptions(parsed, c, base, chk0, only, true, maxOptions); }
     // Outstanding first (rare), then Weak
     var stages = [];
     if (!chk0.outOk) stages.push('down');
@@ -477,8 +534,9 @@ var Engine = (function () {
       if (dir === 'down') { overrides = sols[0].overrides; cur = build(parsed, c, overrides); }
       else finalOpts = sols;
     }
-    return describe(finalOpts || [], hasPinned);
-    function describe(finalOpts, hasPinned) {
+    return describeOptions(parsed, c, base, chk0, finalOpts || [], hasPinned, maxOptions);
+  }
+  function describeOptions(parsed, c, base, chk0, finalOpts, hasPinned, maxOptions) {
     var options = finalOpts.slice(0, maxOptions).map(function (s) {
       var m = build(parsed, c, s.overrides);
       var cells = [], changed = [], students = 0, maxPts = 0;
@@ -496,11 +554,10 @@ var Engine = (function () {
         share: assessedAll ? students / assessedAll : 0, substantial: maxPts > c.substantialPts + 1e-9, check: check(counted(m.items, c.basis), c) };
     });
     return { needed: true, base: base, check: chk0, options: options, total: finalOpts.length, pinned: hasPinned, extraFail: options.length && !options[0].check.extraOk };
-    }
   }
 
   return { CATS: CATS, ROLES: ROLES, ROLE_LABEL: ROLE_LABEL, defaults: defaults, needAt: needAt, judge: judge, roundBy: roundBy, catFromPoints: catFromPoints,
     gridFromAoa: gridFromAoa, parse: parse, headerOptions: headerOptions, colLetter: colLetter, assessedOf: assessedOf,
-    build: build, counted: counted, ruleLabel: ruleLabel, phaseLabel: phaseLabel, dist: dist, check: check, findFixes: findFixes, simulate: simulate, isWeakish: isWeakish, pct: pct, fmt: fmt };
+    build: build, counted: counted, levelCounts: levelCounts, scopes: scopes, checkScopes: checkScopes, ruleLabel: ruleLabel, phaseLabel: phaseLabel, dist: dist, check: check, findFixes: findFixes, simulate: simulate, isWeakish: isWeakish, pct: pct, fmt: fmt };
 })();
 if (typeof module !== 'undefined') module.exports = Engine;

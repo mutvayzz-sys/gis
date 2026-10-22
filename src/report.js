@@ -58,7 +58,7 @@
       var cnt = u.grades.length;
       body += '<tr class="ph-row"><th colspan="5" scope="colgroup">' + esc((multi ? u.block + ' · ' : '') + (u.group !== 'All students' ? u.group + ' · ' : '') + E.phaseLabel(u.phase)) + '<span class="ph-sub">' + esc(u.grades[0].grade) + (cnt > 1 ? ' to ' + esc(u.grades[cnt - 1].grade) : '') + '</span></th></tr>';
       u.grades.concat(u.total ? [u.total] : []).forEach(function (it) {
-        var b = lookup[it.id], countedNow = c.basis === 'both' || (c.basis === 'grades' ? it.kind === 'grade' : it.kind === 'total');
+        var b = lookup[it.id], countedNow = E.levelCounts(c.basis, it.kind === 'grade' ? 'grades' : 'phases');
         function frac(field, withBar) {
           var changed = b && b[field] !== it[field], dl = changed ? it[field] - b[field] : 0;
           return '<td class="lgpc' + (changed ? ' chg' : '') + '"><div class="pc-line"><span class="pc-n"><strong>' + it[field] + '</strong> of ' + it.A + '</span><span class="pc-p">' + lgPct(field === 'G' ? it.I : it.J) + '</span></div>' + (withBar ? lgMeter(it.I, c.acc) : '') + (changed ? '<span class="pc-was">' + (dl > 0 ? '+' : '') + dl + ' students, was ' + b[field] + '</span>' : '') + '</td>';
@@ -81,7 +81,7 @@
     var sel = opts.length ? Math.min(st.sel, opts.length - 1) : 0;
     var subj = subjectName(), today = new Date().toLocaleDateString('en-GB', { day: 'numeric', month: 'long', year: 'numeric' });
     var nG = m.items.filter(function (x) { return x.kind === 'grade'; }).length, nT = m.items.length - nG;
-    var basisTxt = { both: nG + ' grades and ' + nT + ' phase totals', grades: nG + ' grades', phases: nT + ' phase totals' }[c.basis];
+    var basisTxt = { both: nG + ' grades and ' + nT + ' phase totals', grades: nG + ' grades', phases: nT + ' phase totals', each: nG + ' grades and ' + nT + ' phase totals, each checked on its own' }[c.basis] + (multi && c.limitScope === 'subject' ? ', for each subject on its own' : '');
     var groups = Array.from(new Set(m.items.map(function (x) { return x.group; })));
     var label = function (it) { return (multi ? it.block + ': ' : '') + (it.kind === 'total' ? it.label : it.grade); };
     // Workbooks: one for the actual results and the selected option, one per other option for its sheet.
@@ -101,7 +101,9 @@
     else findings.push('<strong>No adding-up mistakes were found.</strong> Every count, percentage and total checked out.');
     if (noPhase.length) findings.push('<strong>The sheet does not say which phase each grade belongs to.</strong> ' + (noPhase.length > 1 || multi ? 'Each table is' : 'All grades are') + ' treated as one phase for now, so the phase results need checking.');
     if (derived) findings.push('<strong>Only percentages were given.</strong> Student counts were worked out from them and rounded to whole students.');
-    findings.push('<strong>The actual results ' + (k.weakOk ? 'meet' : 'do not meet') + ' the Weak limit.</strong> ' + k.weak + ' of ' + k.n + ' judgements are Weak (' + P1(k.n ? k.weak / k.n : 0) + '). The limit allows ' + k.maxW + '. ' + (k.outOk ? 'Outstanding is within its limit, with ' + k.out + '.' : 'Outstanding is over its limit: ' + k.out + ' against ' + k.maxO + ' allowed.'));
+    var ksR = E.checkScopes(m, st.parsed, c);
+    if (ksR.many) { var notMet = ksR.scopes.filter(function (x) { return !(x.check.weakOk && x.check.outOk); }); findings.push('<strong>The actual results ' + (notMet.length ? 'do not meet' : 'meet') + ' the limits in ' + (notMet.length ? notMet.length + ' of ' : 'all ') + ksR.scopes.length + ' separate checks.</strong> ' + (notMet.length ? 'Not met: ' + esc(notMet.map(function (x) { return x.label + ' (' + x.check.weak + ' Weak, at most ' + x.check.maxW + '; ' + x.check.out + ' Outstanding, at most ' + x.check.maxO + ')'; }).join('; ')) + '.' : 'Each subject and level is within both limits.')); }
+    else findings.push('<strong>The actual results ' + (k.weakOk ? 'meet' : 'do not meet') + ' the Weak limit.</strong> ' + k.weak + ' of ' + k.n + ' judgements are Weak (' + P1(k.n ? k.weak / k.n : 0) + '). The limit allows ' + k.maxW + '. ' + (k.outOk ? 'Outstanding is within its limit, with ' + k.out + '.' : 'Outstanding is over its limit: ' + k.out + ' against ' + k.maxO + ' allowed.'));
     k.extra.forEach(function (x) { findings.push('<strong>' + esc(x.label) + ': ' + (x.ok ? 'met' : 'not met') + '.</strong> ' + x.count + ' of ' + k.n + ' judgements.'); });
     if (A) findings.push('<strong>At least ' + (k.weak - k.maxW > 0 ? k.weak - k.maxW + ' judgements would have to stop being Weak' : 'a few judgements would have to change') + '.</strong> The smallest way found is ' + A.students + ' more students across ' + A.cells.length + ' grade' + (A.cells.length === 1 ? '' : 's') + ', changing ' + A.changed.length + ' judgements. ' + s.total + ' different way' + (s.total === 1 ? '' : 's') + ' reach the limit with that many changes.' + (A.substantial ? ' The largest change in one grade is ' + A.maxPts.toFixed(1) + ' percentage points, which is substantial.' : ''));
     else if (s && s.needed && s.failed) findings.push('<strong>No simulated scenario can meet the limits with these rules.</strong>');
